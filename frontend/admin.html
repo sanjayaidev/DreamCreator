@@ -17,8 +17,8 @@
                 
                 // Check if token is still valid (with 1 hour buffer)
                 if (expiry > now && (expiry - now) > 3600000) {
-                    // Session is valid, show dashboard by default instead of login
-                    document.write('<style>#loginScreen{display:none}#dashboardScreen{display:block}</style>');
+                    // Session is valid, add class to html element to show dashboard via CSS
+                    document.documentElement.className = 'session-valid';
                 }
             }
         })();
@@ -38,7 +38,7 @@
     </div>
 
     <!-- Admin Dashboard -->
-    <div id="dashboardScreen" style="display: none;">
+    <div id="dashboardScreen" class="dashboard-container">
         <!-- Sidebar -->
         <div class="sidebar">
             <div class="sidebar-brand">
