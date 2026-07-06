@@ -197,9 +197,26 @@ app.post('/api/auth/admin/login', async (req, res) => {
             
             // Create usage stats for admin
             await pool.query(
-                'INSERT INTO usage_stats (user_id) VALUES ($1)',
+                'INSERT INTO usage_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
                 [adminUser.rows[0].id]
             );
+        } else {
+            // Admin user exists - verify the ENV password matches stored hash
+            // If ADMIN_PASSWORD env var changed, update the hash
+            const storedHash = adminUser.rows[0].password_hash;
+            const envPassword = process.env.ADMIN_PASSWORD;
+            
+            // Check if current ENV password matches stored hash
+            const envMatches = await comparePassword(envPassword, storedHash);
+            if (!envMatches) {
+                // Update password hash to match current ENV
+                const newHash = await hashPassword(envPassword);
+                await pool.query(
+                    'UPDATE users SET password_hash = $1 WHERE id = $2',
+                    [newHash, adminUser.rows[0].id]
+                );
+                adminUser.rows[0].password_hash = newHash;
+            }
         }
         
         const user = adminUser.rows[0];
