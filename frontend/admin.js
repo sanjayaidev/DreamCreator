@@ -1,9 +1,12 @@
 // ==================== STATE ====================
 let currentPage = 1;
 let totalPages = 1;
+let collectionPage = 1;
+let collectionTotalPages = 1;
 let editingId = null;
 let deletingId = null;
 let token = null;
+let currentImageUrl = null;
 
 // ==================== DOM REFS ====================
 const loginScreen = document.getElementById('loginScreen');
@@ -11,18 +14,6 @@ const dashboardScreen = document.getElementById('dashboardScreen');
 const loginForm = document.getElementById('loginForm');
 const passwordInput = document.getElementById('passwordInput');
 const loginError = document.getElementById('loginError');
-const promptsBody = document.getElementById('promptsBody');
-const searchInput = document.getElementById('searchInput');
-const categoryFilter = document.getElementById('categoryFilter');
-const limitFilter = document.getElementById('limitFilter');
-const pageInfo = document.getElementById('pageInfo');
-const prevBtn = document.getElementById('prevBtn');
-const nextBtn = document.getElementById('nextBtn');
-const promptModal = document.getElementById('promptModal');
-const deleteModal = document.getElementById('deleteModal');
-const promptForm = document.getElementById('promptForm');
-const modalTitle = document.getElementById('modalTitle');
-const promptId = document.getElementById('promptId');
 
 // ==================== AUTH ====================
 loginForm.addEventListener('submit', async (e) => {
@@ -42,8 +33,7 @@ loginForm.addEventListener('submit', async (e) => {
             token = data.token;
             loginScreen.style.display = 'none';
             dashboardScreen.style.display = 'block';
-            loadCategories();
-            loadPrompts();
+            initDashboard();
         } else {
             loginError.textContent = 'Invalid password. Please try again.';
         }
@@ -58,6 +48,44 @@ function logout() {
     loginScreen.style.display = 'flex';
     passwordInput.value = '';
     loginError.textContent = '';
+}
+
+// ==================== INIT DASHBOARD ====================
+function initDashboard() {
+    loadCategories();
+    loadRecentPrompts();
+    loadCollection();
+    loadStats();
+    loadSettings();
+    loadProfile();
+    setupTabs();
+    setupImageUpload();
+}
+
+// ==================== TABS ====================
+function setupTabs() {
+    const navItems = document.querySelectorAll('.nav-item');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    navItems.forEach(item => {
+        item.addEventListener('click', function() {
+            // Remove active from all nav items
+            navItems.forEach(n => n.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Hide all tabs
+            tabContents.forEach(t => t.classList.remove('active'));
+            
+            // Show selected tab
+            const tabId = this.dataset.tab;
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+            
+            // Refresh collection if switching to it
+            if (tabId === 'collection') {
+                loadCollection();
+            }
+        });
+    });
 }
 
 // ==================== API HELPERS ====================
@@ -76,69 +104,123 @@ async function apiFetch(url, options = {}) {
     return response;
 }
 
-// ==================== LOAD PROMPTS ====================
-async function loadPrompts() {
+// ==================== IMAGE UPLOAD (ImgBB) ====================
+function setupImageUpload() {
+    const fileInput = document.getElementById('imageFileInput');
+    fileInput.addEventListener('change', async function(e) {
+        const file = this.files[0];
+        if (!file) return;
+        
+        // Validate file size (5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            alert('File size must be less than 5MB');
+            this.value = '';
+            return;
+        }
+        
+        // Validate file type
+        const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+            alert('Please upload a valid image (JPG, PNG, GIF, WEBP)');
+            this.value = '';
+            return;
+        }
+        
+        await uploadToImgBB(file);
+    });
+}
+
+async function uploadToImgBB(file) {
+    const progressBar = document.getElementById('uploadProgress');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    
+    progressBar.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = 'Preparing upload...';
+    
     try {
-        const search = searchInput.value;
-        const category = categoryFilter.value;
-        const limit = limitFilter.value;
+        // Get ImgBB API key from settings or use default
+        const apiKey = document.getElementById('imgbbApiKey').value || 'YOUR_IMGBB_API_KEY';
         
-        const url = `/api/admin/prompts?page=${currentPage}&limit=${limit}&search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`;
+        const formData = new FormData();
+        formData.append('key', apiKey);
+        formData.append('image', file);
         
-        const response = await apiFetch(url);
+        progressFill.style.width = '30%';
+        progressText.textContent = 'Uploading to ImgBB...';
+        
+        const response = await fetch('https://api.imgbb.com/1/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        progressFill.style.width = '80%';
+        progressText.textContent = 'Processing...';
+        
         const data = await response.json();
         
-        renderPrompts(data.prompts);
-        totalPages = data.totalPages;
-        updatePagination();
+        if (data.success) {
+            const imageUrl = data.data.url;
+            currentImageUrl = imageUrl;
+            document.getElementById('demoImage').value = imageUrl;
+            
+            // Show preview
+            const preview = document.getElementById('demoImagePreview');
+            preview.src = imageUrl;
+            preview.style.display = 'block';
+            document.getElementById('uploadPlaceholder').style.display = 'none';
+            document.getElementById('removeImageBtn').style.display = 'inline-block';
+            
+            progressFill.style.width = '100%';
+            progressText.textContent = '✅ Upload complete!';
+            
+            setTimeout(() => {
+                progressBar.style.display = 'none';
+            }, 2000);
+        } else {
+            throw new Error(data.error?.message || 'Upload failed');
+        }
     } catch (error) {
-        console.error('Error loading prompts:', error);
-        promptsBody.innerHTML = '<tr><td colspan="7" class="loading-text">Error loading prompts</td></tr>';
+        console.error('Upload error:', error);
+        alert('Failed to upload image: ' + error.message);
+        progressBar.style.display = 'none';
     }
 }
 
-function renderPrompts(prompts) {
-    if (prompts.length === 0) {
-        promptsBody.innerHTML = '<tr><td colspan="7" class="loading-text">No prompts found</td></tr>';
-        return;
-    }
-    
-    promptsBody.innerHTML = prompts.map((prompt, index) => `
-        <tr>
-            <td>${index + 1 + (currentPage - 1) * parseInt(limitFilter.value)}</td>
-            <td><strong>${escapeHtml(prompt.headline)}</strong></td>
-            <td>${escapeHtml(prompt.category)}</td>
-            <td>${escapeHtml(prompt.sub_category || '-')}</td>
-            <td>${prompt.max_images_allowed}</td>
-            <td>
-                <span class="status-badge ${prompt.is_active ? 'status-active' : 'status-inactive'}">
-                    ${prompt.is_active ? 'Active' : 'Inactive'}
-                </span>
-            </td>
-            <td>
-                <button class="btn-edit" onclick="editPrompt('${prompt.id}')">✏️ Edit</button>
-                <button class="btn-delete" onclick="deletePrompt('${prompt.id}')">🗑️ Delete</button>
-            </td>
-        </tr>
-    `).join('');
+function removeImage() {
+    currentImageUrl = null;
+    document.getElementById('demoImage').value = '';
+    document.getElementById('demoImagePreview').style.display = 'none';
+    document.getElementById('uploadPlaceholder').style.display = 'block';
+    document.getElementById('removeImageBtn').style.display = 'none';
+    document.getElementById('imageFileInput').value = '';
 }
 
-// ==================== CATEGORIES ====================
+// ==================== LOAD CATEGORIES ====================
 async function loadCategories() {
     try {
         const response = await apiFetch('/api/admin/categories');
         const categories = await response.json();
         
-        // Populate category filter
-        categoryFilter.innerHTML = '<option value="">All Categories</option>';
-        
-        // Populate category dropdown in form
+        // Populate category dropdown in editor
         const categorySelect = document.getElementById('category');
         categorySelect.innerHTML = '<option value="">Select Category</option>';
         
+        // Populate category dropdown in collection
+        const collectionCategory = document.getElementById('collectionCategory');
+        collectionCategory.innerHTML = '<option value="">All Categories</option>';
+        
         categories.forEach(cat => {
-            categoryFilter.innerHTML += `<option value="${escapeHtml(cat.name)}">${escapeHtml(cat.name)}</option>`;
-            categorySelect.innerHTML += `<option value="${escapeHtml(cat.name)}">${escapeHtml(cat.name)}</option>`;
+            const option1 = document.createElement('option');
+            option1.value = cat.name;
+            option1.textContent = cat.name;
+            categorySelect.appendChild(option1);
+            
+            const option2 = document.createElement('option');
+            option2.value = cat.name;
+            option2.textContent = cat.name;
+            collectionCategory.appendChild(option2);
         });
     } catch (error) {
         console.error('Error loading categories:', error);
@@ -148,76 +230,34 @@ async function loadCategories() {
 async function updateSubCategories() {
     const category = document.getElementById('category').value;
     if (!category) return;
-    
+    // Sub-category is free text for now
+}
+
+// ==================== RECENT PROMPTS ====================
+async function loadRecentPrompts() {
     try {
-        const response = await apiFetch(`/api/admin/subcategories/${encodeURIComponent(category)}`);
-        const subCategories = await response.json();
+        const response = await apiFetch('/api/admin/prompts?limit=5');
+        const data = await response.json();
         
-        // For now, we'll just show a datalist suggestion or leave it as free text
-        // You can implement a dropdown if needed
+        const container = document.getElementById('recentPromptsList');
+        if (data.prompts.length === 0) {
+            container.innerHTML = '<p class="loading-text">No prompts yet. Create your first prompt!</p>';
+            return;
+        }
+        
+        container.innerHTML = data.prompts.map(prompt => `
+            <div class="recent-prompt-item">
+                <span class="prompt-title">${escapeHtml(prompt.headline)}</span>
+                <span class="prompt-category">${escapeHtml(prompt.category)}</span>
+            </div>
+        `).join('');
     } catch (error) {
-        console.error('Error loading sub-categories:', error);
+        console.error('Error loading recent prompts:', error);
     }
 }
 
-// ==================== PAGINATION ====================
-function updatePagination() {
-    pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
-    prevBtn.disabled = currentPage === 1;
-    nextBtn.disabled = currentPage === totalPages || totalPages === 0;
-}
-
-function changePage(direction) {
-    if (direction === 'prev' && currentPage > 1) {
-        currentPage--;
-    } else if (direction === 'next' && currentPage < totalPages) {
-        currentPage++;
-    }
-    loadPrompts();
-}
-
-// ==================== MODAL OPERATIONS ====================
-function openAddModal() {
-    editingId = null;
-    modalTitle.textContent = 'Add New Prompt';
-    promptForm.reset();
-    promptId.value = '';
-    document.getElementById('isActive').value = 'true';
-    promptModal.style.display = 'block';
-}
-
-function closeModal() {
-    promptModal.style.display = 'none';
-}
-
-async function editPrompt(id) {
-    try {
-        const response = await apiFetch(`/api/admin/prompts/${id}`);
-        const prompt = await response.json();
-        
-        editingId = id;
-        modalTitle.textContent = 'Edit Prompt';
-        promptId.value = id;
-        
-        document.getElementById('headline').value = prompt.headline;
-        document.getElementById('description').value = prompt.description || '';
-        document.getElementById('fullPrompt').value = prompt.full_prompt;
-        document.getElementById('category').value = prompt.category;
-        document.getElementById('subCategory').value = prompt.sub_category || '';
-        document.getElementById('tags').value = prompt.tags ? prompt.tags.join(', ') : '';
-        document.getElementById('demoImage').value = prompt.demo_image_url || '';
-        document.getElementById('maxImages').value = prompt.max_images_allowed;
-        document.getElementById('isActive').value = prompt.is_active ? 'true' : 'false';
-        
-        promptModal.style.display = 'block';
-    } catch (error) {
-        console.error('Error loading prompt for edit:', error);
-        alert('Failed to load prompt data');
-    }
-}
-
-// ==================== SAVE PROMPT ====================
-promptForm.addEventListener('submit', async (e) => {
+// ==================== PROMPT FORM ====================
+document.getElementById('promptForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const data = {
@@ -234,6 +274,8 @@ promptForm.addEventListener('submit', async (e) => {
     
     try {
         let response;
+        const editingId = document.getElementById('promptId').value;
+        
         if (editingId) {
             response = await apiFetch(`/api/admin/prompts/${editingId}`, {
                 method: 'PUT',
@@ -247,9 +289,13 @@ promptForm.addEventListener('submit', async (e) => {
         }
         
         if (response.ok) {
-            closeModal();
-            loadPrompts();
             alert(editingId ? 'Prompt updated successfully!' : 'Prompt created successfully!');
+            document.getElementById('promptForm').reset();
+            document.getElementById('promptId').value = '';
+            removeImage();
+            loadRecentPrompts();
+            loadCollection();
+            loadStats();
         } else {
             const error = await response.json();
             alert(`Error: ${error.error}`);
@@ -260,14 +306,121 @@ promptForm.addEventListener('submit', async (e) => {
     }
 });
 
+// ==================== COLLECTION ====================
+async function loadCollection() {
+    try {
+        const search = document.getElementById('collectionSearch').value;
+        const category = document.getElementById('collectionCategory').value;
+        const limit = parseInt(document.getElementById('collectionLimit').value);
+        
+        const url = `/api/admin/prompts?page=${collectionPage}&limit=${limit}&search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`;
+        
+        const response = await apiFetch(url);
+        const data = await response.json();
+        
+        renderCollection(data.prompts);
+        collectionTotalPages = data.totalPages;
+        updateCollectionPagination();
+    } catch (error) {
+        console.error('Error loading collection:', error);
+        document.getElementById('collectionGrid').innerHTML = '<div class="loading-text">Error loading prompts</div>';
+    }
+}
+
+function renderCollection(prompts) {
+    const grid = document.getElementById('collectionGrid');
+    
+    if (prompts.length === 0) {
+        grid.innerHTML = '<div class="loading-text">No prompts found</div>';
+        return;
+    }
+    
+    grid.innerHTML = prompts.map(prompt => `
+        <div class="collection-card">
+            ${prompt.demo_image_url ? `<img src="${escapeHtml(prompt.demo_image_url)}" alt="${escapeHtml(prompt.headline)}" class="card-image">` : 
+            `<div class="card-image" style="background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; color: white; font-size: 48px;">📷</div>`}
+            <div class="card-body">
+                <div class="card-headline">${escapeHtml(prompt.headline)}</div>
+                <div class="card-description">${escapeHtml(prompt.description || 'No description')}</div>
+                <div class="card-meta">
+                    <span>${escapeHtml(prompt.category)}${prompt.sub_category ? ` → ${escapeHtml(prompt.sub_category)}` : ''}</span>
+                    <span>📸 ${prompt.max_images_allowed} image${prompt.max_images_allowed > 1 ? 's' : ''}</span>
+                </div>
+                ${prompt.tags && prompt.tags.length > 0 ? `
+                    <div class="card-tags">
+                        ${prompt.tags.map(tag => `<span class="card-tag">#${escapeHtml(tag)}</span>`).join('')}
+                    </div>
+                ` : ''}
+                <div style="margin-top: 12px; display: flex; gap: 8px;">
+                    <button class="btn-edit" onclick="editPrompt('${prompt.id}')">✏️ Edit</button>
+                    <button class="btn-delete" onclick="deletePrompt('${prompt.id}')">🗑️ Delete</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateCollectionPagination() {
+    document.getElementById('collectionPageInfo').textContent = `Page ${collectionPage} of ${collectionTotalPages || 1}`;
+    document.getElementById('collectionPrevBtn').disabled = collectionPage === 1;
+    document.getElementById('collectionNextBtn').disabled = collectionPage === collectionTotalPages || collectionTotalPages === 0;
+}
+
+function changeCollectionPage(direction) {
+    if (direction === 'prev' && collectionPage > 1) {
+        collectionPage--;
+    } else if (direction === 'next' && collectionPage < collectionTotalPages) {
+        collectionPage++;
+    }
+    loadCollection();
+}
+
+// ==================== EDIT PROMPT ====================
+async function editPrompt(id) {
+    try {
+        const response = await apiFetch(`/api/admin/prompts/${id}`);
+        const prompt = await response.json();
+        
+        // Switch to editor tab
+        document.querySelector('[data-tab="editor"]').click();
+        
+        document.getElementById('promptId').value = id;
+        document.getElementById('headline').value = prompt.headline;
+        document.getElementById('description').value = prompt.description || '';
+        document.getElementById('fullPrompt').value = prompt.full_prompt;
+        document.getElementById('category').value = prompt.category;
+        document.getElementById('subCategory').value = prompt.sub_category || '';
+        document.getElementById('tags').value = prompt.tags ? prompt.tags.join(', ') : '';
+        document.getElementById('maxImages').value = prompt.max_images_allowed;
+        document.getElementById('isActive').value = prompt.is_active ? 'true' : 'false';
+        
+        // Show image if exists
+        if (prompt.demo_image_url) {
+            currentImageUrl = prompt.demo_image_url;
+            document.getElementById('demoImage').value = prompt.demo_image_url;
+            const preview = document.getElementById('demoImagePreview');
+            preview.src = prompt.demo_image_url;
+            preview.style.display = 'block';
+            document.getElementById('uploadPlaceholder').style.display = 'none';
+            document.getElementById('removeImageBtn').style.display = 'inline-block';
+        }
+        
+        // Scroll to form
+        document.querySelector('.editor-form').scrollIntoView({ behavior: 'smooth' });
+    } catch (error) {
+        console.error('Error loading prompt for edit:', error);
+        alert('Failed to load prompt data');
+    }
+}
+
 // ==================== DELETE PROMPT ====================
 function deletePrompt(id) {
     deletingId = id;
-    deleteModal.style.display = 'block';
+    document.getElementById('deleteModal').style.display = 'block';
 }
 
 function closeDeleteModal() {
-    deleteModal.style.display = 'none';
+    document.getElementById('deleteModal').style.display = 'none';
     deletingId = null;
 }
 
@@ -281,7 +434,9 @@ async function confirmDelete() {
         
         if (response.ok) {
             closeDeleteModal();
-            loadPrompts();
+            loadRecentPrompts();
+            loadCollection();
+            loadStats();
             alert('Prompt deleted successfully!');
         } else {
             const error = await response.json();
@@ -293,19 +448,95 @@ async function confirmDelete() {
     }
 }
 
+// ==================== STATS ====================
+async function loadStats() {
+    try {
+        const response = await apiFetch('/api/admin/prompts?limit=1');
+        const data = await response.json();
+        
+        document.getElementById('totalPrompts').textContent = data.total || 0;
+        
+        // Get active prompts count
+        const activeResponse = await apiFetch('/api/admin/prompts?limit=1&search=&category=&is_active=true');
+        const activeData = await activeResponse.json();
+        document.getElementById('activePrompts').textContent = activeData.total || 0;
+        
+        // Get categories count
+        const catResponse = await apiFetch('/api/admin/categories');
+        const categories = await catResponse.json();
+        document.getElementById('totalCategories').textContent = categories.length || 0;
+        
+        // Placeholder for images generated
+        document.getElementById('totalImages').textContent = '0';
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
+
+// ==================== SETTINGS ====================
+function loadSettings() {
+    // Load settings from localStorage
+    document.getElementById('imgbbApiKey').value = localStorage.getItem('imgbbApiKey') || '';
+    document.getElementById('nimEndpoint').value = localStorage.getItem('nimEndpoint') || '';
+    document.getElementById('nimApiKey').value = localStorage.getItem('nimApiKey') || '';
+    document.getElementById('driveFolderId').value = localStorage.getItem('driveFolderId') || '';
+    document.getElementById('serviceAccount').value = localStorage.getItem('serviceAccount') || '';
+    document.getElementById('defaultStorage').value = localStorage.getItem('defaultStorage') || 'imgbb';
+}
+
+function saveSettings() {
+    localStorage.setItem('imgbbApiKey', document.getElementById('imgbbApiKey').value);
+    localStorage.setItem('nimEndpoint', document.getElementById('nimEndpoint').value);
+    localStorage.setItem('nimApiKey', document.getElementById('nimApiKey').value);
+    alert('Settings saved successfully!');
+}
+
+function saveDriveSettings() {
+    localStorage.setItem('driveFolderId', document.getElementById('driveFolderId').value);
+    localStorage.setItem('serviceAccount', document.getElementById('serviceAccount').value);
+    alert('Drive settings saved successfully!');
+}
+
+function saveStorageSettings() {
+    localStorage.setItem('defaultStorage', document.getElementById('defaultStorage').value);
+    alert('Storage settings saved successfully!');
+}
+
+// ==================== PROFILE ====================
+function loadProfile() {
+    document.getElementById('brandName').value = localStorage.getItem('brandName') || 'PromptPro';
+    document.getElementById('brandLogo').value = localStorage.getItem('brandLogo') || '';
+    document.getElementById('brandColor').value = localStorage.getItem('brandColor') || '#667eea';
+    document.getElementById('siteTitle').value = localStorage.getItem('siteTitle') || 'PromptPro - AI Image Generator';
+    document.getElementById('siteDescription').value = localStorage.getItem('siteDescription') || 'Generate stunning images with AI-powered prompts';
+    document.getElementById('defaultPerPage').value = localStorage.getItem('defaultPerPage') || '24';
+}
+
+function saveBrandSettings() {
+    localStorage.setItem('brandName', document.getElementById('brandName').value);
+    localStorage.setItem('brandLogo', document.getElementById('brandLogo').value);
+    localStorage.setItem('brandColor', document.getElementById('brandColor').value);
+    alert('Brand settings saved successfully!');
+}
+
+function saveUISettings() {
+    localStorage.setItem('siteTitle', document.getElementById('siteTitle').value);
+    localStorage.setItem('siteDescription', document.getElementById('siteDescription').value);
+    localStorage.setItem('defaultPerPage', document.getElementById('defaultPerPage').value);
+    alert('UI settings saved successfully!');
+}
+
 // ==================== UTILITIES ====================
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// ==================== CLOSE MODALS ON OUTSIDE CLICK ====================
+// ==================== CLOSE MODALS ====================
 window.onclick = function(event) {
-    if (event.target === promptModal) {
-        closeModal();
-    }
-    if (event.target === deleteModal) {
+    if (event.target === document.getElementById('deleteModal')) {
         closeDeleteModal();
     }
 };
