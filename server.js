@@ -48,11 +48,11 @@ const upload = multer({
 
 // ==================== SERVE STATIC FILES ====================
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'frontend', 'user', 'index.html'));
+    res.sendFile(path.join(__dirname, 'frontend', 'user.html'));
 });
 
 app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'frontend', 'admin', 'index.html'));
+    res.sendFile(path.join(__dirname, 'frontend', 'admin.html'));
 });
 
 // ==================== IMPORT UTILITIES ====================
