@@ -183,13 +183,11 @@ app.post('/api/auth/admin/login', async (req, res) => {
     try {
         const { password } = req.body;
         
-        if (password !== process.env.ADMIN_PASSWORD) {
-            return res.status(401).json({ error: 'Invalid password' });
-        }
-        
-        let adminUser = await pool.query('SELECT * FROM users WHERE email = $1', ['admin@promptpro.com']);
+        // Get or create admin user
+        let adminUser = await pool.query('SELECT * FROM users WHERE email = $1 AND is_admin = true', ['admin@promptpro.com']);
         
         if (adminUser.rows.length === 0) {
+            // Create admin user if doesn't exist
             const hashedPassword = await hashPassword(process.env.ADMIN_PASSWORD);
             const result = await pool.query(
                 'INSERT INTO users (email, password_hash, name, is_admin) VALUES ($1, $2, $3, $4) RETURNING id, email, name, is_admin',
@@ -199,12 +197,19 @@ app.post('/api/auth/admin/login', async (req, res) => {
             
             // Create usage stats for admin
             await pool.query(
-                'INSERT INTO usage_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+                'INSERT INTO usage_stats (user_id) VALUES ($1)',
                 [adminUser.rows[0].id]
             );
         }
         
         const user = adminUser.rows[0];
+        
+        // Verify password against stored hash
+        const isValid = await comparePassword(password, user.password_hash);
+        if (!isValid) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        
         const token = generateToken(user.id, true);
         
         const expiresAt = new Date();
