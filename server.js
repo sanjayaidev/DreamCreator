@@ -178,72 +178,31 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-// Admin login
+// Admin login - no database, just env variable check
 app.post('/api/auth/admin/login', async (req, res) => {
     try {
         const { password } = req.body;
+        const adminPassword = process.env.ADMIN_PASSWORD;
         
-        // Get or create admin user
-        let adminUser = await pool.query('SELECT * FROM users WHERE email = $1 AND is_admin = true', ['admin@promptpro.com']);
-        
-        if (adminUser.rows.length === 0) {
-            // Create admin user if doesn't exist
-            const hashedPassword = await hashPassword(process.env.ADMIN_PASSWORD);
-            const result = await pool.query(
-                'INSERT INTO users (email, password_hash, name, is_admin) VALUES ($1, $2, $3, $4) RETURNING id, email, name, is_admin',
-                ['admin@promptpro.com', hashedPassword, 'Admin', true]
-            );
-            adminUser = result;
-            
-            // Create usage stats for admin
-            await pool.query(
-                'INSERT INTO usage_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
-                [adminUser.rows[0].id]
-            );
-        } else {
-            // Admin user exists - verify the ENV password matches stored hash
-            // If ADMIN_PASSWORD env var changed, update the hash
-            const storedHash = adminUser.rows[0].password_hash;
-            const envPassword = process.env.ADMIN_PASSWORD;
-            
-            // Check if current ENV password matches stored hash
-            const envMatches = await comparePassword(envPassword, storedHash);
-            if (!envMatches) {
-                // Update password hash to match current ENV
-                const newHash = await hashPassword(envPassword);
-                await pool.query(
-                    'UPDATE users SET password_hash = $1 WHERE id = $2',
-                    [newHash, adminUser.rows[0].id]
-                );
-                adminUser.rows[0].password_hash = newHash;
-            }
+        if (!adminPassword) {
+            return res.status(500).json({ error: 'Admin password not configured' });
         }
         
-        const user = adminUser.rows[0];
-        
-        // Verify password against stored hash
-        const isValid = await comparePassword(password, user.password_hash);
-        if (!isValid) {
+        // Direct password comparison with env variable
+        if (password !== adminPassword) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         
-        const token = generateToken(user.id, true);
-        
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 7);
-        
-        await pool.query(
-            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET token = $2, expires_at = $3',
-            [user.id, token, expiresAt]
-        );
+        // Generate token for admin (id: 0, isAdmin: true)
+        const token = generateToken(0, true);
         
         res.json({
             success: true,
             user: {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                isAdmin: user.is_admin
+                id: 0,
+                email: 'admin@promptpro.com',
+                name: 'Admin',
+                isAdmin: true
             },
             token
         });
