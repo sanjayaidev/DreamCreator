@@ -21,135 +21,317 @@
 
     <!-- Admin Dashboard -->
     <div id="dashboardScreen" style="display: none;">
-        <!-- Header -->
-        <header class="admin-header">
-            <div class="header-content">
-                <h1>📋 Prompt Manager</h1>
-                <div class="header-actions">
-                    <button onclick="openAddModal()" class="btn-primary">+ Add New Prompt</button>
-                    <button onclick="logout()" class="btn-secondary">Logout</button>
-                </div>
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-brand">
+                <h2>📋 PromptPro</h2>
+                <span class="brand-sub">Admin Panel</span>
             </div>
-        </header>
-
-        <!-- Filters -->
-        <div class="filters-bar">
-            <div class="filters-content">
-                <input type="text" id="searchInput" placeholder="🔍 Search prompts..." oninput="loadPrompts()">
-                <select id="categoryFilter" onchange="loadPrompts()">
-                    <option value="">All Categories</option>
-                </select>
-                <select id="limitFilter" onchange="loadPrompts()">
-                    <option value="10">10 per page</option>
-                    <option value="20" selected>20 per page</option>
-                    <option value="50">50 per page</option>
-                    <option value="100">100 per page</option>
-                </select>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="editor">
+                    <span class="nav-icon">✏️</span>
+                    <span class="nav-text">Prompt Editor</span>
+                </button>
+                <button class="nav-item" data-tab="collection">
+                    <span class="nav-icon">📚</span>
+                    <span class="nav-text">Prompts Collection</span>
+                </button>
+                <button class="nav-item" data-tab="settings">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">Settings</span>
+                </button>
+                <button class="nav-item" data-tab="profile">
+                    <span class="nav-icon">👤</span>
+                    <span class="nav-text">Profile</span>
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="logout-btn">
+                    <span class="nav-icon">🚪</span>
+                    <span class="nav-text">Logout</span>
+                </button>
             </div>
         </div>
 
-        <!-- Prompts Table -->
-        <div class="table-container">
-            <table id="promptsTable">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Headline</th>
-                        <th>Category</th>
-                        <th>Sub-Category</th>
-                        <th>Images</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="promptsBody">
-                    <tr>
-                        <td colspan="7" class="loading-text">Loading prompts...</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- ========== TAB 1: PROMPT EDITOR ========== -->
+            <div id="tab-editor" class="tab-content active">
+                <div class="tab-header">
+                    <h1>✏️ Prompt Editor & Creator</h1>
+                    <p>Create and manage your prompts with image uploads</p>
+                </div>
 
-        <!-- Pagination -->
-        <div class="pagination-container">
-            <button onclick="changePage('prev')" id="prevBtn" class="btn-pagination">← Previous</button>
-            <span id="pageInfo">Page 1 of 1</span>
-            <button onclick="changePage('next')" id="nextBtn" class="btn-pagination">Next →</button>
-        </div>
-    </div>
+                <div class="editor-container">
+                    <!-- Form -->
+                    <div class="editor-form">
+                        <form id="promptForm">
+                            <input type="hidden" id="promptId">
+                            
+                            <div class="form-group">
+                                <label>Headline *</label>
+                                <input type="text" id="headline" required placeholder="Enter prompt headline">
+                            </div>
 
-    <!-- Add/Edit Prompt Modal -->
-    <div id="promptModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modalTitle">Add New Prompt</h2>
-                <span class="close" onclick="closeModal()">&times;</span>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea id="description" rows="2" placeholder="Brief description"></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Full Prompt *</label>
+                                <textarea id="fullPrompt" rows="4" required placeholder="Enter the full prompt text"></textarea>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Category *</label>
+                                    <select id="category" required onchange="updateSubCategories()">
+                                        <option value="">Select Category</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Sub-Category</label>
+                                    <input type="text" id="subCategory" placeholder="e.g., Ocean, Forest">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Tags (comma separated)</label>
+                                <input type="text" id="tags" placeholder="e.g., sunset, ocean, golden hour">
+                            </div>
+
+                            <!-- Image Upload with ImgBB -->
+                            <div class="form-group">
+                                <label>Demo Image</label>
+                                <div class="image-upload-container">
+                                    <div class="image-preview" id="imagePreview">
+                                        <img id="demoImagePreview" style="display: none;" alt="Demo image">
+                                        <div class="upload-placeholder" id="uploadPlaceholder">
+                                            <span>📤</span>
+                                            <p>Click to upload image</p>
+                                            <small>Supports JPG, PNG, GIF (Max 5MB)</small>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+                                    <input type="hidden" id="demoImage" value="">
+                                    <button type="button" onclick="document.getElementById('imageFileInput').click()" class="btn-secondary">
+                                        Upload Image
+                                    </button>
+                                    <button type="button" onclick="removeImage()" class="btn-danger" id="removeImageBtn" style="display: none;">
+                                        Remove
+                                    </button>
+                                </div>
+                                <div id="uploadProgress" style="display: none;" class="upload-progress">
+                                    <div class="progress-bar"><div id="progressFill" style="width: 0%;"></div></div>
+                                    <span id="progressText">Uploading...</span>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Max Images Allowed</label>
+                                    <select id="maxImages">
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                        <option value="3">3</option>
+                                        <option value="4">4+</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Status</label>
+                                    <select id="isActive">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="reset" class="btn-secondary">Clear</button>
+                                <button type="submit" class="btn-primary">Save Prompt</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Recent Prompts List -->
+                    <div class="recent-prompts">
+                        <h3>Recent Prompts</h3>
+                        <div id="recentPromptsList">
+                            <p class="loading-text">Loading recent prompts...</p>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <form id="promptForm">
-                <input type="hidden" id="promptId">
-                
-                <div class="form-group">
-                    <label>Headline *</label>
-                    <input type="text" id="headline" required placeholder="Enter prompt headline">
+
+            <!-- ========== TAB 2: PROMPTS COLLECTION ========== -->
+            <div id="tab-collection" class="tab-content">
+                <div class="tab-header">
+                    <h1>📚 Prompts Collection</h1>
+                    <p>Browse all prompts in card style with images</p>
                 </div>
 
-                <div class="form-group">
-                    <label>Description</label>
-                    <textarea id="description" rows="2" placeholder="Brief description"></textarea>
+                <!-- Filters -->
+                <div class="collection-filters">
+                    <input type="text" id="collectionSearch" placeholder="🔍 Search prompts..." oninput="loadCollection()">
+                    <select id="collectionCategory" onchange="loadCollection()">
+                        <option value="">All Categories</option>
+                    </select>
+                    <select id="collectionLimit" onchange="loadCollection()">
+                        <option value="12">12 per page</option>
+                        <option value="24" selected>24 per page</option>
+                        <option value="48">48 per page</option>
+                    </select>
                 </div>
 
-                <div class="form-group">
-                    <label>Full Prompt *</label>
-                    <textarea id="fullPrompt" rows="4" required placeholder="Enter the full prompt text"></textarea>
+                <!-- Cards Grid -->
+                <div class="collection-grid" id="collectionGrid">
+                    <div class="loading-text">Loading prompts...</div>
                 </div>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Category *</label>
-                        <select id="category" required onchange="updateSubCategories()">
-                            <option value="">Select Category</option>
-                        </select>
+                <!-- Pagination -->
+                <div class="collection-pagination">
+                    <button onclick="changeCollectionPage('prev')" id="collectionPrevBtn" class="btn-pagination">← Previous</button>
+                    <span id="collectionPageInfo">Page 1 of 1</span>
+                    <button onclick="changeCollectionPage('next')" id="collectionNextBtn" class="btn-pagination">Next →</button>
+                </div>
+            </div>
+
+            <!-- ========== TAB 3: SETTINGS ========== -->
+            <div id="tab-settings" class="tab-content">
+                <div class="tab-header">
+                    <h1>⚙️ Settings</h1>
+                    <p>Configure API keys and integrations</p>
+                </div>
+
+                <div class="settings-container">
+                    <div class="settings-section">
+                        <h3>🔑 API Keys</h3>
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>ImgBB API Key</label>
+                                <input type="password" id="imgbbApiKey" placeholder="Enter your ImgBB API key">
+                                <small>Get your key from <a href="https://api.imgbb.com/" target="_blank">ImgBB API</a></small>
+                            </div>
+                            <div class="form-group">
+                                <label>NIM Endpoint (Coming Soon)</label>
+                                <input type="text" id="nimEndpoint" placeholder="https://api.nim.com/v1/generate" disabled>
+                            </div>
+                            <div class="form-group">
+                                <label>NIM API Key (Coming Soon)</label>
+                                <input type="password" id="nimApiKey" placeholder="Enter NIM API key" disabled>
+                            </div>
+                            <button onclick="saveSettings()" class="btn-primary">Save Settings</button>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Sub-Category</label>
-                        <input type="text" id="subCategory" placeholder="e.g., Ocean, Forest">
+
+                    <div class="settings-section">
+                        <h3>💾 Drive Integration</h3>
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Google Drive Folder ID</label>
+                                <input type="text" id="driveFolderId" placeholder="Enter Google Drive folder ID">
+                                <small>Store generated images in a Google Drive folder</small>
+                            </div>
+                            <div class="form-group">
+                                <label>Service Account JSON</label>
+                                <textarea id="serviceAccount" rows="4" placeholder='{"type": "service_account", ...}'></textarea>
+                            </div>
+                            <button onclick="saveDriveSettings()" class="btn-primary">Save Drive Settings</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>🖼️ Storage Settings</h3>
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Default Image Storage</label>
+                                <select id="defaultStorage">
+                                    <option value="imgbb">ImgBB</option>
+                                    <option value="drive">Google Drive</option>
+                                    <option value="local">Local Storage</option>
+                                </select>
+                            </div>
+                            <button onclick="saveStorageSettings()" class="btn-primary">Save Storage Settings</button>
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="form-group">
-                    <label>Tags (comma separated)</label>
-                    <input type="text" id="tags" placeholder="e.g., sunset, ocean, golden hour">
+            <!-- ========== TAB 4: PROFILE ========== -->
+            <div id="tab-profile" class="tab-content">
+                <div class="tab-header">
+                    <h1>👤 Profile</h1>
+                    <p>Manage your brand and user interface settings</p>
                 </div>
 
-                <div class="form-group">
-                    <label>Demo Image URL</label>
-                    <input type="url" id="demoImage" placeholder="https://example.com/image.jpg">
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Max Images Allowed</label>
-                        <select id="maxImages">
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4+</option>
-                        </select>
+                <div class="profile-container">
+                    <div class="profile-section">
+                        <h3>🏷️ Brand Settings</h3>
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Brand Name</label>
+                                <input type="text" id="brandName" placeholder="Your brand name" value="PromptPro">
+                            </div>
+                            <div class="form-group">
+                                <label>Brand Logo URL</label>
+                                <input type="url" id="brandLogo" placeholder="https://example.com/logo.png">
+                            </div>
+                            <div class="form-group">
+                                <label>Brand Color</label>
+                                <input type="color" id="brandColor" value="#667eea">
+                            </div>
+                            <button onclick="saveBrandSettings()" class="btn-primary">Save Brand Settings</button>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Status</label>
-                        <select id="isActive">
-                            <option value="true">Active</option>
-                            <option value="false">Inactive</option>
-                        </select>
+
+                    <div class="profile-section">
+                        <h3>🎨 User UI Settings</h3>
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Site Title</label>
+                                <input type="text" id="siteTitle" placeholder="Site title" value="PromptPro - AI Image Generator">
+                            </div>
+                            <div class="form-group">
+                                <label>Site Description</label>
+                                <textarea id="siteDescription" rows="2" placeholder="Site description">Generate stunning images with AI-powered prompts</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Default Prompt per Page (User View)</label>
+                                <select id="defaultPerPage">
+                                    <option value="12">12</option>
+                                    <option value="24" selected>24</option>
+                                    <option value="48">48</option>
+                                    <option value="96">96</option>
+                                </select>
+                            </div>
+                            <button onclick="saveUISettings()" class="btn-primary">Save UI Settings</button>
+                        </div>
+                    </div>
+
+                    <div class="profile-section">
+                        <h3>📊 Stats</h3>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <span class="stat-label">Total Prompts</span>
+                                <span class="stat-value" id="totalPrompts">0</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-label">Active Prompts</span>
+                                <span class="stat-value" id="activePrompts">0</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-label">Categories</span>
+                                <span class="stat-value" id="totalCategories">0</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-label">Images Generated</span>
+                                <span class="stat-value" id="totalImages">0</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-
-                <div class="modal-actions">
-                    <button type="button" onclick="closeModal()" class="btn-secondary">Cancel</button>
-                    <button type="submit" class="btn-primary">Save Prompt</button>
-                </div>
-            </form>
+            </div>
         </div>
     </div>
 
