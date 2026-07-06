@@ -2,9 +2,9 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
-const axios = require('axios');
-const FormData = require('form-data');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -19,321 +19,322 @@ const pool = new Pool({
 });
 
 // ==================== MIDDLEWARE ====================
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://localhost:3001'],
+    credentials: true
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('frontend'));
 
-// ==================== SERVE ADMIN ====================
+// ==================== SERVE STATIC FILES ====================
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'frontend', 'admin.html'));
+    res.sendFile(path.join(__dirname, 'frontend', 'user', 'index.html'));
 });
 
-// ==================== ADMIN AUTH ====================
-const adminAuth = (req, res, next) => {
-    const token = req.headers['authorization'];
-    if (!token || token !== `Bearer ${process.env.ADMIN_PASSWORD}`) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    next();
-};
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend', 'admin', 'index.html'));
+});
 
-// ==================== IMGBB UPLOAD HELPER ====================
-async function uploadToImgBB(imageData) {
+// ==================== IMPORT UTILITIES ====================
+const { uploadToImgBB } = require('./utils/imgbb');
+const { generateImage } = require('./utils/alibaba');
+const { 
+    verifyToken, 
+    verifyAdmin, 
+    generateToken, 
+    hashPassword, 
+    comparePassword 
+} = require('./middleware/auth');
+
+// ==================== AUTH ROUTES ====================
+
+// Register
+app.post('/api/auth/register', async (req, res) => {
     try {
-        const apiKey = process.env.IMGBB_API_KEY;
-        if (!apiKey) {
-            throw new Error('ImgBB API key not configured. Please add IMGBB_API_KEY to .env');
+        const { email, password, name } = req.body;
+        
+        // Check if user exists
+        const existingUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({ error: 'User already exists' });
         }
-
-        let base64Data = imageData;
-
-        // If it's a URL, download and convert to base64
-        if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
-            const response = await axios.get(imageData, { 
-                responseType: 'arraybuffer',
-                timeout: 30000 
-            });
-            base64Data = Buffer.from(response.data).toString('base64');
-        } 
-        // If it's a data URL, extract base64 part
-        else if (imageData.startsWith('data:image')) {
-            base64Data = imageData.split(',')[1];
-        }
-        // If it's already base64 without prefix, use as is
-
-        const formData = new FormData();
-        formData.append('key', apiKey);
-        formData.append('image', base64Data);
-
-        const response = await axios.post('https://api.imgbb.com/1/upload', formData, {
-            headers: {
-                ...formData.getHeaders()
-            },
-            timeout: 30000
+        
+        // Hash password
+        const hashedPassword = await hashPassword(password);
+        
+        // Create user
+        const result = await pool.query(
+            'INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name',
+            [email, hashedPassword, name || email.split('@')[0]]
+        );
+        
+        const user = result.rows[0];
+        const token = generateToken(user.id, false);
+        
+        // Create session
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+        
+        await pool.query(
+            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
+            [user.id, token, expiresAt]
+        );
+        
+        res.status(201).json({
+            success: true,
+            user: { id: user.id, email: user.email, name: user.name },
+            token
         });
-
-        if (response.data.success) {
-            return response.data.data.display_url || response.data.data.url;
-        } else {
-            throw new Error(response.data.error?.message || 'ImgBB upload failed');
-        }
     } catch (error) {
-        console.error('ImgBB upload error:', error);
-        throw new Error(`ImgBB upload failed: ${error.message}`);
-    }
-}
-
-// ==================== ALIBABA CLOUD MODEL CALLS (WORKING) ====================
-
-// --- Qwen Models (from your working test.js) ---
-async function callQwenModel(model, promptText, imageUrl, negativePrompt) {
-    const API_KEY = process.env.DASHSCOPE_API_KEY;
-    if (!API_KEY) {
-        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
-    }
-
-    const ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
-    const isBareEdit = model === 'qwen-image-edit';
-
-    // Upload user image to ImgBB first if it's a data URL
-    let finalImageUrl = imageUrl;
-    if (imageUrl.startsWith('data:image')) {
-        finalImageUrl = await uploadToImgBB(imageUrl);
-    }
-
-    const body = {
-        model,
-        input: {
-            messages: [{
-                role: "user",
-                content: [
-                    { image: finalImageUrl },
-                    { text: promptText }
-                ]
-            }]
-        },
-        parameters: isBareEdit
-            ? { n: 1 }
-            : { 
-                n: 1, 
-                watermark: false, 
-                prompt_extend: true,
-                negative_prompt: negativePrompt || " "
-            }
-    };
-
-    console.log(`Calling Qwen model: ${model}`);
-    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
-
-    const response = await axios.post(ENDPOINT, body, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
-        },
-        timeout: 120000
-    });
-
-    if (response.data.code) {
-        throw new Error(`API Error: ${response.data.message || response.data.code}`);
-    }
-
-    const content = response.data.output?.choices?.[0]?.message?.content || [];
-    const imageEntry = content.find(c => c.image);
-    
-    if (imageEntry && imageEntry.image) {
-        console.log('Qwen generation successful, uploading to ImgBB...');
-        // Upload generated image to ImgBB
-        const imgbbUrl = await uploadToImgBB(imageEntry.image);
-        return { success: true, imageUrl: imgbbUrl };
-    } else {
-        throw new Error('No image in response from Qwen model');
-    }
-}
-
-// --- Wan Sync Models (from your working test-wan.js) ---
-async function callWanSyncModel(model, promptText, imageUrl, negativePrompt) {
-    const API_KEY = process.env.DASHSCOPE_API_KEY;
-    if (!API_KEY) {
-        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
-    }
-
-    const ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
-
-    // Upload user image to ImgBB first if it's a data URL
-    let finalImageUrl = imageUrl;
-    if (imageUrl.startsWith('data:image')) {
-        finalImageUrl = await uploadToImgBB(imageUrl);
-    }
-
-    const body = {
-        model,
-        input: {
-            messages: [{
-                role: "user",
-                content: [
-                    { text: promptText },
-                    { image: finalImageUrl }
-                ]
-            }]
-        },
-        parameters: {
-            n: 1,
-            enable_interleave: false,
-            watermark: false,
-            prompt_extend: true,
-            size: "1K",
-            negative_prompt: negativePrompt || " "
-        }
-    };
-
-    console.log(`Calling Wan sync model: ${model}`);
-    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
-
-    const response = await axios.post(ENDPOINT, body, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
-        },
-        timeout: 120000
-    });
-
-    if (response.data.code) {
-        throw new Error(`API Error: ${response.data.message || response.data.code}`);
-    }
-
-    const content = response.data.output?.choices?.[0]?.message?.content || [];
-    const imageEntry = content.find(c => c.image);
-    
-    if (imageEntry && imageEntry.image) {
-        console.log('Wan sync generation successful, uploading to ImgBB...');
-        // Upload generated image to ImgBB
-        const imgbbUrl = await uploadToImgBB(imageEntry.image);
-        return { success: true, imageUrl: imgbbUrl };
-    } else {
-        throw new Error('No image in response from Wan sync model');
-    }
-}
-
-// --- Wan Async Models (from your working test-wan.js) ---
-async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt) {
-    const API_KEY = process.env.DASHSCOPE_API_KEY;
-    if (!API_KEY) {
-        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
-    }
-
-    const CREATE_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/image2image/image-synthesis";
-    const TASK_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/tasks/";
-
-    // Upload user image to ImgBB first if it's a data URL
-    let finalImageUrl = imageUrl;
-    if (imageUrl.startsWith('data:image')) {
-        finalImageUrl = await uploadToImgBB(imageUrl);
-    }
-
-    const createBody = {
-        model,
-        input: {
-            prompt: promptText,
-            images: [finalImageUrl]
-        },
-        parameters: {
-            n: 1,
-            negative_prompt: negativePrompt || " "
-        }
-    };
-
-    console.log(`Calling Wan async model: ${model}`);
-    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
-
-    const createRes = await axios.post(CREATE_ENDPOINT, createBody, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`,
-            'X-DashScope-Async': 'enable'
-        },
-        timeout: 30000
-    });
-
-    if (createRes.status !== 200 || createRes.data.code) {
-        throw new Error(createRes.data.message || createRes.data.code || `HTTP ${createRes.status}`);
-    }
-
-    const taskId = createRes.data.output?.task_id;
-    if (!taskId) {
-        throw new Error('No task_id returned from Wan async model');
-    }
-
-    console.log(`Wan async task created: ${taskId}, polling for result...`);
-
-    // Poll for result (up to 2 minutes)
-    for (let i = 0; i < 24; i++) {
-        await sleep(5000);
-        const pollRes = await axios.get(TASK_ENDPOINT + taskId, {
-            headers: { 'Authorization': `Bearer ${API_KEY}` },
-            timeout: 10000
-        });
-
-        const status = pollRes.data.output?.task_status;
-        if (status === 'SUCCEEDED') {
-            const resultUrl = pollRes.data.output?.results?.[0]?.url;
-            if (resultUrl) {
-                console.log('Wan async generation successful, uploading to ImgBB...');
-                // Upload generated image to ImgBB
-                const imgbbUrl = await uploadToImgBB(resultUrl);
-                return { success: true, imageUrl: imgbbUrl };
-            } else {
-                throw new Error('No image URL in result from Wan async model');
-            }
-        }
-        if (status === 'FAILED' || status === 'CANCELED') {
-            throw new Error(pollRes.data.output?.message || status);
-        }
-        // else PENDING / RUNNING -> keep polling
-    }
-    throw new Error('Timed out waiting for Wan async task to finish');
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// ==================== GENERATION CONTROLLER ====================
-async function generateImage(model, promptText, imageData, negativePrompt) {
-    console.log(`Generating with model: ${model}`);
-    
-    // Determine model type
-    const isQwen = model.startsWith('qwen');
-    const isWanSync = ['wan2.7-image-pro', 'wan2.7-image', 'wan2.6-image'].includes(model);
-    const isWanAsync = model === 'wan2.5-i2i-preview';
-
-    let result;
-    if (isQwen) {
-        result = await callQwenModel(model, promptText, imageData, negativePrompt);
-    } else if (isWanSync) {
-        result = await callWanSyncModel(model, promptText, imageData, negativePrompt);
-    } else if (isWanAsync) {
-        result = await callWanAsyncModel(model, promptText, imageData, negativePrompt);
-    } else {
-        throw new Error(`Unknown model: ${model}`);
-    }
-
-    return result;
-}
-
-// ==================== ADMIN ROUTES ====================
-
-// Admin login
-app.post('/api/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === process.env.ADMIN_PASSWORD) {
-        res.json({ success: true, token: password });
-    } else {
-        res.status(401).json({ error: 'Invalid password' });
+        console.error('Registration error:', error);
+        res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// Get all prompts (with pagination and filters)
-app.get('/api/admin/prompts', adminAuth, async (req, res) => {
+// Login
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        
+        // Find user
+        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        
+        const user = result.rows[0];
+        
+        // Check password
+        const isValid = await comparePassword(password, user.password_hash);
+        if (!isValid) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        
+        // Generate token
+        const token = generateToken(user.id, user.is_admin);
+        
+        // Create session
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7);
+        
+        await pool.query(
+            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
+            [user.id, token, expiresAt]
+        );
+        
+        res.json({
+            success: true,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                isAdmin: user.is_admin
+            },
+            token
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Admin login (simplified for existing setup)
+app.post('/api/auth/admin/login', async (req, res) => {
+    try {
+        const { password } = req.body;
+        
+        // Check against env variable
+        if (password !== process.env.ADMIN_PASSWORD) {
+            return res.status(401).json({ error: 'Invalid password' });
+        }
+        
+        // Get or create admin user
+        let adminUser = await pool.query('SELECT * FROM users WHERE email = $1', ['admin@promptpro.com']);
+        
+        if (adminUser.rows.length === 0) {
+            const hashedPassword = await hashPassword(process.env.ADMIN_PASSWORD);
+            const result = await pool.query(
+                'INSERT INTO users (email, password_hash, name, is_admin) VALUES ($1, $2, $3, $4) RETURNING id, email, name, is_admin',
+                ['admin@promptpro.com', hashedPassword, 'Admin', true]
+            );
+            adminUser = result;
+        }
+        
+        const user = adminUser.rows[0];
+        const token = generateToken(user.id, true);
+        
+        // Create session
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7);
+        
+        await pool.query(
+            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
+            [user.id, token, expiresAt]
+        );
+        
+        res.json({
+            success: true,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                isAdmin: user.is_admin
+            },
+            token
+        });
+    } catch (error) {
+        console.error('Admin login error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Verify token
+app.get('/api/auth/verify', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) {
+            return res.status(401).json({ error: 'No token provided' });
+        }
+        
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const result = await pool.query(
+            'SELECT u.id, u.email, u.name, u.is_admin FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token = $1 AND s.expires_at > NOW()',
+            [token]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid or expired session' });
+        }
+        
+        res.json({
+            valid: true,
+            user: result.rows[0]
+        });
+    } catch (error) {
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
+// Logout
+app.post('/api/auth/logout', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (token) {
+            await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ error: 'Logout failed' });
+    }
+});
+
+// ==================== GOOGLE DRIVE ROUTES ====================
+
+// Initiate Google Drive OAuth
+app.get('/api/drive/auth', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Generate OAuth state
+        const state = crypto.randomBytes(32).toString('hex');
+        
+        // Store state with user ID
+        await pool.query(
+            'INSERT INTO oauth_states (state, user_id, created_at) VALUES ($1, $2, NOW())',
+            [state, decoded.userId]
+        );
+        
+        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+            `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
+            `redirect_uri=${process.env.GOOGLE_REDIRECT_URI}&` +
+            `response_type=code&` +
+            `scope=https://www.googleapis.com/auth/drive.file&` +
+            `access_type=offline&` +
+            `state=${state}&` +
+            `prompt=consent`;
+        
+        res.json({ authUrl });
+    } catch (error) {
+        console.error('Drive auth error:', error);
+        res.status(500).json({ error: 'Failed to initiate Drive auth' });
+    }
+});
+
+// Google Drive OAuth Callback
+app.get('/api/drive/callback', async (req, res) => {
+    try {
+        const { code, state } = req.query;
+        
+        // Verify state
+        const stateResult = await pool.query(
+            'SELECT user_id FROM oauth_states WHERE state = $1 AND created_at > NOW() - INTERVAL \'10 minutes\'',
+            [state]
+        );
+        
+        if (stateResult.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid state' });
+        }
+        
+        const userId = stateResult.rows[0].user_id;
+        
+        // Exchange code for tokens
+        const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+            code,
+            client_id: process.env.GOOGLE_CLIENT_ID,
+            client_secret: process.env.GOOGLE_CLIENT_SECRET,
+            redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+            grant_type: 'authorization_code'
+        });
+        
+        const { access_token, refresh_token, expires_in } = tokenResponse.data;
+        
+        // Save to database
+        const expiresAt = new Date();
+        expiresAt.setSeconds(expiresAt.getSeconds() + expires_in);
+        
+        await pool.query(
+            `INSERT INTO drive_connections (user_id, access_token, refresh_token, expires_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (user_id) DO UPDATE SET
+             access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW()`,
+            [userId, access_token, refresh_token, expiresAt]
+        );
+        
+        // Delete used state
+        await pool.query('DELETE FROM oauth_states WHERE state = $1', [state]);
+        
+        res.redirect(`${process.env.FRONTEND_URL}/admin?drive=connected`);
+    } catch (error) {
+        console.error('Drive callback error:', error);
+        res.status(500).json({ error: 'Failed to connect Drive' });
+    }
+});
+
+// Get Drive connection status
+app.get('/api/drive/status', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM drive_connections WHERE user_id = $1 AND expires_at > NOW()',
+            [req.userId]
+        );
+        
+        res.json({ connected: result.rows.length > 0 });
+    } catch (error) {
+        console.error('Drive status error:', error);
+        res.status(500).json({ error: 'Failed to check Drive status' });
+    }
+});
+
+// ==================== ADMIN ROUTES (Protected) ====================
+
+// Get all prompts (admin)
+app.get('/api/admin/prompts', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { page = 1, limit = 20, search = '', category = '' } = req.query;
         const offset = (page - 1) * limit;
@@ -390,8 +391,8 @@ app.get('/api/admin/prompts', adminAuth, async (req, res) => {
     }
 });
 
-// Get single prompt
-app.get('/api/admin/prompts/:id', adminAuth, async (req, res) => {
+// Get single prompt (admin)
+app.get('/api/admin/prompts/:id', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const result = await pool.query('SELECT * FROM prompts WHERE id = $1', [id]);
@@ -407,8 +408,8 @@ app.get('/api/admin/prompts/:id', adminAuth, async (req, res) => {
     }
 });
 
-// Create new prompt
-app.post('/api/admin/prompts', adminAuth, async (req, res) => {
+// Create new prompt (admin)
+app.post('/api/admin/prompts', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { 
             headline, 
@@ -424,10 +425,10 @@ app.post('/api/admin/prompts', adminAuth, async (req, res) => {
         
         const result = await pool.query(
             `INSERT INTO prompts 
-             (headline, description, full_prompt, category, sub_category, tags, demo_image_url, max_images_allowed, is_active) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+             (headline, description, full_prompt, category, sub_category, tags, demo_image_url, max_images_allowed, is_active, created_by) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
              RETURNING *`,
-            [headline, description, full_prompt, category, sub_category, tags || [], demo_image_url, max_images_allowed || 1, is_active !== undefined ? is_active : true]
+            [headline, description, full_prompt, category, sub_category, tags || [], demo_image_url, max_images_allowed || 1, is_active !== undefined ? is_active : true, req.userId]
         );
         
         res.status(201).json(result.rows[0]);
@@ -437,8 +438,8 @@ app.post('/api/admin/prompts', adminAuth, async (req, res) => {
     }
 });
 
-// Update prompt
-app.put('/api/admin/prompts/:id', adminAuth, async (req, res) => {
+// Update prompt (admin)
+app.put('/api/admin/prompts/:id', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { 
@@ -481,8 +482,8 @@ app.put('/api/admin/prompts/:id', adminAuth, async (req, res) => {
     }
 });
 
-// Delete prompt
-app.delete('/api/admin/prompts/:id', adminAuth, async (req, res) => {
+// Delete prompt (admin)
+app.delete('/api/admin/prompts/:id', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const result = await pool.query('DELETE FROM prompts WHERE id = $1 RETURNING *', [id]);
@@ -498,8 +499,8 @@ app.delete('/api/admin/prompts/:id', adminAuth, async (req, res) => {
     }
 });
 
-// Get all categories
-app.get('/api/admin/categories', adminAuth, async (req, res) => {
+// Get all categories (admin)
+app.get('/api/admin/categories', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM categories ORDER BY name');
         res.json(result.rows);
@@ -509,8 +510,8 @@ app.get('/api/admin/categories', adminAuth, async (req, res) => {
     }
 });
 
-// Get all sub-categories for a category
-app.get('/api/admin/subcategories/:category', adminAuth, async (req, res) => {
+// Get all sub-categories (admin)
+app.get('/api/admin/subcategories/:category', verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { category } = req.params;
         const result = await pool.query(
@@ -524,9 +525,9 @@ app.get('/api/admin/subcategories/:category', adminAuth, async (req, res) => {
     }
 });
 
-// ==================== USER ROUTES ====================
+// ==================== USER ROUTES (Protected) ====================
 
-// Get prompts for user (public)
+// Get prompts for user
 app.get('/api/prompts', async (req, res) => {
     try {
         const { page = 1, limit = 12, category, subCategory, search, sort = 'newest' } = req.query;
@@ -554,7 +555,6 @@ app.get('/api/prompts', async (req, res) => {
             paramCount++;
         }
         
-        // Sorting
         const sortMap = {
             'newest': 'created_at DESC',
             'popular': 'views DESC',
@@ -567,7 +567,6 @@ app.get('/api/prompts', async (req, res) => {
         
         const result = await pool.query(query, params);
         
-        // Get total count
         let countQuery = 'SELECT COUNT(*) FROM prompts WHERE is_active = true';
         const countParams = [];
         let countParamCount = 1;
@@ -614,7 +613,6 @@ app.get('/api/prompts/:id', async (req, res) => {
             return res.status(404).json({ error: 'Prompt not found' });
         }
         
-        // Increment view count
         await pool.query('UPDATE prompts SET views = COALESCE(views, 0) + 1 WHERE id = $1', [id]);
         
         res.json(result.rows[0]);
@@ -650,130 +648,47 @@ app.get('/api/subcategories/:category', async (req, res) => {
     }
 });
 
-// ==================== GENERATION ENDPOINT (WORKING) ====================
-app.post('/api/generate', async (req, res) => {
+// ==================== GENERATION ROUTE ====================
+app.post('/api/generate', verifyToken, async (req, res) => {
     try {
-        const { 
-            promptId, 
-            imageData, 
-            model, 
-            negativePrompt
-        } = req.body;
-
-        console.log('='.repeat(70));
-        console.log('🔄 Generation Request Received');
-        console.log('='.repeat(70));
-        console.log(`Prompt ID: ${promptId}`);
-        console.log(`Model: ${model || 'auto'}`);
-        console.log(`Image Data: ${imageData ? '✅ Present' : '❌ Missing'}`);
-        console.log(`Negative Prompt: ${negativePrompt || 'None'}`);
-        console.log('='.repeat(70));
-
-        // Validate input
-        if (!promptId) {
-            return res.status(400).json({ error: 'Prompt ID is required' });
-        }
-
-        if (!imageData) {
-            return res.status(400).json({ error: 'Image data is required' });
-        }
-
-        // Get the prompt
+        const { promptId, imageData, model, negativePrompt } = req.body;
+        
+        // Get prompt
         const promptResult = await pool.query('SELECT * FROM prompts WHERE id = $1 AND is_active = true', [promptId]);
         if (promptResult.rows.length === 0) {
             return res.status(404).json({ error: 'Prompt not found' });
         }
         const prompt = promptResult.rows[0];
-
-        // Auto-select model if not specified
+        
+        // Select model
         let selectedModel = model;
         if (!selectedModel || selectedModel === 'auto') {
-            // Default to qwen-image-2.0-pro as it's the most capable
             selectedModel = 'qwen-image-2.0-pro';
         }
-
-        console.log(`📝 Using model: ${selectedModel}`);
-        console.log(`📝 Prompt: ${prompt.full_prompt.substring(0, 100)}...`);
-
-        // Generate image using the selected model
+        
+        // Generate image
         const result = await generateImage(
             selectedModel,
             prompt.full_prompt,
             imageData,
             negativePrompt
         );
-
-        console.log(`✅ Generation successful!`);
-        console.log(`📸 Image URL: ${result.imageUrl}`);
-        console.log('='.repeat(70));
-
-        // Save generation history
-        try {
-            await pool.query(
-                `INSERT INTO generations (prompt_id, model, image_url, created_at) 
-                 VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
-                [promptId, selectedModel, result.imageUrl]
-            );
-            console.log('💾 Generation saved to history');
-        } catch (dbError) {
-            console.warn('⚠️ Could not save generation history:', dbError.message);
-        }
-
-        res.json({ 
-            success: true, 
+        
+        // Save generation
+        await pool.query(
+            'INSERT INTO generations (prompt_id, user_id, model, image_url, status) VALUES ($1, $2, $3, $4, $5)',
+            [promptId, req.userId, selectedModel, result.imageUrl, 'completed']
+        );
+        
+        res.json({
+            success: true,
             imageUrl: result.imageUrl,
             model: selectedModel
         });
-
     } catch (error) {
-        console.error('❌ Generation error:', error);
-        console.error('Stack:', error.stack);
-        console.log('='.repeat(70));
-        
-        res.status(500).json({ 
-            success: false, 
-            error: error.message || 'Generation failed' 
-        });
+        console.error('Generation error:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
-});
-
-// ==================== SETTINGS ROUTES (for admin) ====================
-
-// Get settings (protected)
-app.get('/api/admin/settings', adminAuth, async (req, res) => {
-    try {
-        const settings = {
-            imgbbApiKey: process.env.IMGBB_API_KEY ? '********' : null,
-            dashscopeApiKey: process.env.DASHSCOPE_API_KEY ? '********' : null,
-            nimEndpoint: process.env.NIM_ENDPOINT || null,
-            nimApiKey: process.env.NIM_API_KEY ? '********' : null,
-            driveFolderId: process.env.DRIVE_FOLDER_ID || null,
-            defaultStorage: process.env.DEFAULT_STORAGE || 'imgbb'
-        };
-        res.json(settings);
-    } catch (error) {
-        console.error('Error fetching settings:', error);
-        res.status(500).json({ error: 'Failed to fetch settings' });
-    }
-});
-
-// ==================== HEALTH CHECK ====================
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        models: [
-            'qwen-image-2.0-pro',
-            'qwen-image-2.0',
-            'qwen-image-edit-max',
-            'qwen-image-edit-plus',
-            'qwen-image-edit',
-            'wan2.7-image-pro',
-            'wan2.7-image',
-            'wan2.6-image',
-            'wan2.5-i2i-preview'
-        ]
-    });
 });
 
 // ==================== START SERVER ====================
@@ -781,35 +696,8 @@ app.listen(PORT, () => {
     console.log('='.repeat(70));
     console.log('🚀 PromptPro Server Started');
     console.log('='.repeat(70));
-    console.log(`📡 Server running on: http://localhost:${PORT}`);
-    console.log(`🔐 Admin panel: http://localhost:${PORT}/admin.html`);
-    console.log(`👤 User interface: http://localhost:${PORT}/user.html`);
+    console.log(`📡 Server: http://localhost:${PORT}`);
+    console.log(`🔐 Admin: http://localhost:${PORT}/admin`);
+    console.log(`👤 User: http://localhost:${PORT}`);
     console.log('='.repeat(70));
-    console.log('📋 Available Models:');
-    console.log('  ✅ qwen-image-2.0-pro (Recommended)');
-    console.log('  ✅ qwen-image-2.0');
-    console.log('  ✅ qwen-image-edit-max');
-    console.log('  ✅ qwen-image-edit-plus');
-    console.log('  ✅ qwen-image-edit');
-    console.log('  ✅ wan2.7-image-pro');
-    console.log('  ✅ wan2.7-image');
-    console.log('  ✅ wan2.6-image');
-    console.log('  ✅ wan2.5-i2i-preview');
-    console.log('='.repeat(70));
-    console.log('⚡ All images uploaded to ImgBB automatically');
-    console.log('='.repeat(70));
-    
-    // Check for required environment variables
-    const warnings = [];
-    if (!process.env.IMGBB_API_KEY) warnings.push('IMGBB_API_KEY not set');
-    if (!process.env.DASHSCOPE_API_KEY) warnings.push('DASHSCOPE_API_KEY not set');
-    
-    if (warnings.length > 0) {
-        console.log('⚠️  WARNINGS:');
-        warnings.forEach(w => console.log(`   - ${w}`));
-        console.log('='.repeat(70));
-    } else {
-        console.log('✅ All required API keys are configured!');
-        console.log('='.repeat(70));
-    }
 });
