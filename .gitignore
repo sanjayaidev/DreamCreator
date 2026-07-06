@@ -1,6 +1,1 @@
-```
-# Dependencies
-node_modules/
-# Lock files
-package-lock.json
-```
+Nothing should be ignored since the changes only include source files (.sql, .js) without any build artifacts, dependencies, or temporary files.
