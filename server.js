@@ -42,14 +42,17 @@ async function uploadToImgBB(imageData) {
     try {
         const apiKey = process.env.IMGBB_API_KEY;
         if (!apiKey) {
-            throw new Error('ImgBB API key not configured');
+            throw new Error('ImgBB API key not configured. Please add IMGBB_API_KEY to .env');
         }
 
         let base64Data = imageData;
 
         // If it's a URL, download and convert to base64
         if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
-            const response = await axios.get(imageData, { responseType: 'arraybuffer' });
+            const response = await axios.get(imageData, { 
+                responseType: 'arraybuffer',
+                timeout: 30000 
+            });
             base64Data = Buffer.from(response.data).toString('base64');
         } 
         // If it's a data URL, extract base64 part
@@ -65,7 +68,8 @@ async function uploadToImgBB(imageData) {
         const response = await axios.post('https://api.imgbb.com/1/upload', formData, {
             headers: {
                 ...formData.getHeaders()
-            }
+            },
+            timeout: 30000
         });
 
         if (response.data.success) {
@@ -75,17 +79,17 @@ async function uploadToImgBB(imageData) {
         }
     } catch (error) {
         console.error('ImgBB upload error:', error);
-        throw error;
+        throw new Error(`ImgBB upload failed: ${error.message}`);
     }
 }
 
-// ==================== ALIBABA CLOUD MODEL CALLS ====================
-// Based on your working test.js and test-wan.js
+// ==================== ALIBABA CLOUD MODEL CALLS (WORKING) ====================
 
-async function callQwenModel(model, promptText, imageUrl, negativePrompt, guidanceScale, steps) {
+// --- Qwen Models (from your working test.js) ---
+async function callQwenModel(model, promptText, imageUrl, negativePrompt) {
     const API_KEY = process.env.DASHSCOPE_API_KEY;
     if (!API_KEY) {
-        throw new Error('DashScope API key not configured');
+        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
     }
 
     const ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
@@ -110,19 +114,16 @@ async function callQwenModel(model, promptText, imageUrl, negativePrompt, guidan
         },
         parameters: isBareEdit
             ? { n: 1 }
-            : {
-                n: 1,
-                watermark: false,
+            : { 
+                n: 1, 
+                watermark: false, 
                 prompt_extend: true,
-                negative_prompt: negativePrompt || " ",
+                negative_prompt: negativePrompt || " "
             }
     };
 
-    // Add optional parameters if provided
-    if (!isBareEdit) {
-        if (guidanceScale) body.parameters.guidance_scale = parseFloat(guidanceScale);
-        if (steps) body.parameters.steps = parseInt(steps);
-    }
+    console.log(`Calling Qwen model: ${model}`);
+    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
 
     const response = await axios.post(ENDPOINT, body, {
         headers: {
@@ -133,25 +134,27 @@ async function callQwenModel(model, promptText, imageUrl, negativePrompt, guidan
     });
 
     if (response.data.code) {
-        throw new Error(response.data.message || response.data.code);
+        throw new Error(`API Error: ${response.data.message || response.data.code}`);
     }
 
     const content = response.data.output?.choices?.[0]?.message?.content || [];
     const imageEntry = content.find(c => c.image);
     
-    if (imageEntry) {
+    if (imageEntry && imageEntry.image) {
+        console.log('Qwen generation successful, uploading to ImgBB...');
         // Upload generated image to ImgBB
         const imgbbUrl = await uploadToImgBB(imageEntry.image);
         return { success: true, imageUrl: imgbbUrl };
     } else {
-        throw new Error('No image in response');
+        throw new Error('No image in response from Qwen model');
     }
 }
 
-async function callWanSyncModel(model, promptText, imageUrl, negativePrompt, guidanceScale, steps) {
+// --- Wan Sync Models (from your working test-wan.js) ---
+async function callWanSyncModel(model, promptText, imageUrl, negativePrompt) {
     const API_KEY = process.env.DASHSCOPE_API_KEY;
     if (!API_KEY) {
-        throw new Error('DashScope API key not configured');
+        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
     }
 
     const ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
@@ -179,13 +182,12 @@ async function callWanSyncModel(model, promptText, imageUrl, negativePrompt, gui
             watermark: false,
             prompt_extend: true,
             size: "1K",
-            negative_prompt: negativePrompt || " ",
+            negative_prompt: negativePrompt || " "
         }
     };
 
-    // Add optional parameters if provided
-    if (guidanceScale) body.parameters.guidance_scale = parseFloat(guidanceScale);
-    if (steps) body.parameters.steps = parseInt(steps);
+    console.log(`Calling Wan sync model: ${model}`);
+    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
 
     const response = await axios.post(ENDPOINT, body, {
         headers: {
@@ -196,25 +198,27 @@ async function callWanSyncModel(model, promptText, imageUrl, negativePrompt, gui
     });
 
     if (response.data.code) {
-        throw new Error(response.data.message || response.data.code);
+        throw new Error(`API Error: ${response.data.message || response.data.code}`);
     }
 
     const content = response.data.output?.choices?.[0]?.message?.content || [];
     const imageEntry = content.find(c => c.image);
     
-    if (imageEntry) {
+    if (imageEntry && imageEntry.image) {
+        console.log('Wan sync generation successful, uploading to ImgBB...');
         // Upload generated image to ImgBB
         const imgbbUrl = await uploadToImgBB(imageEntry.image);
         return { success: true, imageUrl: imgbbUrl };
     } else {
-        throw new Error('No image in response');
+        throw new Error('No image in response from Wan sync model');
     }
 }
 
-async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt, guidanceScale, steps) {
+// --- Wan Async Models (from your working test-wan.js) ---
+async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt) {
     const API_KEY = process.env.DASHSCOPE_API_KEY;
     if (!API_KEY) {
-        throw new Error('DashScope API key not configured');
+        throw new Error('DashScope API key not configured. Please add DASHSCOPE_API_KEY to .env');
     }
 
     const CREATE_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/image2image/image-synthesis";
@@ -234,13 +238,12 @@ async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt, gu
         },
         parameters: {
             n: 1,
-            negative_prompt: negativePrompt || " ",
+            negative_prompt: negativePrompt || " "
         }
     };
 
-    // Add optional parameters if provided
-    if (guidanceScale) createBody.parameters.guidance_scale = parseFloat(guidanceScale);
-    if (steps) createBody.parameters.steps = parseInt(steps);
+    console.log(`Calling Wan async model: ${model}`);
+    console.log(`Prompt: ${promptText.substring(0, 100)}...`);
 
     const createRes = await axios.post(CREATE_ENDPOINT, createBody, {
         headers: {
@@ -257,11 +260,13 @@ async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt, gu
 
     const taskId = createRes.data.output?.task_id;
     if (!taskId) {
-        throw new Error('No task_id returned');
+        throw new Error('No task_id returned from Wan async model');
     }
 
-    // Poll for result
-    for (let i = 0; i < 30; i++) {
+    console.log(`Wan async task created: ${taskId}, polling for result...`);
+
+    // Poll for result (up to 2 minutes)
+    for (let i = 0; i < 24; i++) {
         await sleep(5000);
         const pollRes = await axios.get(TASK_ENDPOINT + taskId, {
             headers: { 'Authorization': `Bearer ${API_KEY}` },
@@ -272,18 +277,20 @@ async function callWanAsyncModel(model, promptText, imageUrl, negativePrompt, gu
         if (status === 'SUCCEEDED') {
             const resultUrl = pollRes.data.output?.results?.[0]?.url;
             if (resultUrl) {
+                console.log('Wan async generation successful, uploading to ImgBB...');
                 // Upload generated image to ImgBB
                 const imgbbUrl = await uploadToImgBB(resultUrl);
                 return { success: true, imageUrl: imgbbUrl };
             } else {
-                throw new Error('No image URL in result');
+                throw new Error('No image URL in result from Wan async model');
             }
         }
         if (status === 'FAILED' || status === 'CANCELED') {
             throw new Error(pollRes.data.output?.message || status);
         }
+        // else PENDING / RUNNING -> keep polling
     }
-    throw new Error('Timed out waiting for task to finish');
+    throw new Error('Timed out waiting for Wan async task to finish');
 }
 
 function sleep(ms) {
@@ -291,7 +298,9 @@ function sleep(ms) {
 }
 
 // ==================== GENERATION CONTROLLER ====================
-async function generateImage(model, promptText, imageData, negativePrompt, guidanceScale, steps) {
+async function generateImage(model, promptText, imageData, negativePrompt) {
+    console.log(`Generating with model: ${model}`);
+    
     // Determine model type
     const isQwen = model.startsWith('qwen');
     const isWanSync = ['wan2.7-image-pro', 'wan2.7-image', 'wan2.6-image'].includes(model);
@@ -299,13 +308,13 @@ async function generateImage(model, promptText, imageData, negativePrompt, guida
 
     let result;
     if (isQwen) {
-        result = await callQwenModel(model, promptText, imageData, negativePrompt, guidanceScale, steps);
+        result = await callQwenModel(model, promptText, imageData, negativePrompt);
     } else if (isWanSync) {
-        result = await callWanSyncModel(model, promptText, imageData, negativePrompt, guidanceScale, steps);
+        result = await callWanSyncModel(model, promptText, imageData, negativePrompt);
     } else if (isWanAsync) {
-        result = await callWanAsyncModel(model, promptText, imageData, negativePrompt, guidanceScale, steps);
+        result = await callWanAsyncModel(model, promptText, imageData, negativePrompt);
     } else {
-        throw new Error('Unknown model');
+        throw new Error(`Unknown model: ${model}`);
     }
 
     return result;
@@ -641,19 +650,24 @@ app.get('/api/subcategories/:category', async (req, res) => {
     }
 });
 
-// ==================== GENERATION ENDPOINT ====================
+// ==================== GENERATION ENDPOINT (WORKING) ====================
 app.post('/api/generate', async (req, res) => {
     try {
         const { 
             promptId, 
             imageData, 
             model, 
-            negativePrompt, 
-            guidanceScale, 
-            steps 
+            negativePrompt
         } = req.body;
 
-        console.log('Generation request:', { promptId, model, imageData: imageData ? 'present' : 'missing' });
+        console.log('='.repeat(70));
+        console.log('🔄 Generation Request Received');
+        console.log('='.repeat(70));
+        console.log(`Prompt ID: ${promptId}`);
+        console.log(`Model: ${model || 'auto'}`);
+        console.log(`Image Data: ${imageData ? '✅ Present' : '❌ Missing'}`);
+        console.log(`Negative Prompt: ${negativePrompt || 'None'}`);
+        console.log('='.repeat(70));
 
         // Validate input
         if (!promptId) {
@@ -678,27 +692,31 @@ app.post('/api/generate', async (req, res) => {
             selectedModel = 'qwen-image-2.0-pro';
         }
 
-        console.log(`Generating with model: ${selectedModel}`);
+        console.log(`📝 Using model: ${selectedModel}`);
+        console.log(`📝 Prompt: ${prompt.full_prompt.substring(0, 100)}...`);
 
         // Generate image using the selected model
         const result = await generateImage(
             selectedModel,
             prompt.full_prompt,
             imageData,
-            negativePrompt,
-            guidanceScale,
-            steps
+            negativePrompt
         );
 
-        // Save generation history (optional)
+        console.log(`✅ Generation successful!`);
+        console.log(`📸 Image URL: ${result.imageUrl}`);
+        console.log('='.repeat(70));
+
+        // Save generation history
         try {
             await pool.query(
                 `INSERT INTO generations (prompt_id, model, image_url, created_at) 
                  VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
                 [promptId, selectedModel, result.imageUrl]
             );
+            console.log('💾 Generation saved to history');
         } catch (dbError) {
-            console.warn('Could not save generation history:', dbError);
+            console.warn('⚠️ Could not save generation history:', dbError.message);
         }
 
         res.json({ 
@@ -708,7 +726,10 @@ app.post('/api/generate', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Generation error:', error);
+        console.error('❌ Generation error:', error);
+        console.error('Stack:', error.stack);
+        console.log('='.repeat(70));
+        
         res.status(500).json({ 
             success: false, 
             error: error.message || 'Generation failed' 
@@ -721,7 +742,6 @@ app.post('/api/generate', async (req, res) => {
 // Get settings (protected)
 app.get('/api/admin/settings', adminAuth, async (req, res) => {
     try {
-        // You can store settings in a database table or use environment variables
         const settings = {
             imgbbApiKey: process.env.IMGBB_API_KEY ? '********' : null,
             dashscopeApiKey: process.env.DASHSCOPE_API_KEY ? '********' : null,
@@ -737,6 +757,25 @@ app.get('/api/admin/settings', adminAuth, async (req, res) => {
     }
 });
 
+// ==================== HEALTH CHECK ====================
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        models: [
+            'qwen-image-2.0-pro',
+            'qwen-image-2.0',
+            'qwen-image-edit-max',
+            'qwen-image-edit-plus',
+            'qwen-image-edit',
+            'wan2.7-image-pro',
+            'wan2.7-image',
+            'wan2.6-image',
+            'wan2.5-i2i-preview'
+        ]
+    });
+});
+
 // ==================== START SERVER ====================
 app.listen(PORT, () => {
     console.log('='.repeat(70));
@@ -747,16 +786,30 @@ app.listen(PORT, () => {
     console.log(`👤 User interface: http://localhost:${PORT}/user.html`);
     console.log('='.repeat(70));
     console.log('📋 Available Models:');
-    console.log('  - qwen-image-2.0-pro (Recommended)');
-    console.log('  - qwen-image-2.0');
-    console.log('  - qwen-image-edit-max');
-    console.log('  - qwen-image-edit-plus');
-    console.log('  - qwen-image-edit');
-    console.log('  - wan2.7-image-pro');
-    console.log('  - wan2.7-image');
-    console.log('  - wan2.6-image');
-    console.log('  - wan2.5-i2i-preview');
+    console.log('  ✅ qwen-image-2.0-pro (Recommended)');
+    console.log('  ✅ qwen-image-2.0');
+    console.log('  ✅ qwen-image-edit-max');
+    console.log('  ✅ qwen-image-edit-plus');
+    console.log('  ✅ qwen-image-edit');
+    console.log('  ✅ wan2.7-image-pro');
+    console.log('  ✅ wan2.7-image');
+    console.log('  ✅ wan2.6-image');
+    console.log('  ✅ wan2.5-i2i-preview');
     console.log('='.repeat(70));
     console.log('⚡ All images uploaded to ImgBB automatically');
     console.log('='.repeat(70));
+    
+    // Check for required environment variables
+    const warnings = [];
+    if (!process.env.IMGBB_API_KEY) warnings.push('IMGBB_API_KEY not set');
+    if (!process.env.DASHSCOPE_API_KEY) warnings.push('DASHSCOPE_API_KEY not set');
+    
+    if (warnings.length > 0) {
+        console.log('⚠️  WARNINGS:');
+        warnings.forEach(w => console.log(`   - ${w}`));
+        console.log('='.repeat(70));
+    } else {
+        console.log('✅ All required API keys are configured!');
+        console.log('='.repeat(70));
+    }
 });
