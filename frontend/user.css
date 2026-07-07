@@ -827,6 +827,33 @@ body {
     margin: 5px 0;
 }
 
+.param-group input[type="text"],
+.param-group input[type="email"],
+.param-group input[type="password"],
+.param-group input[type="number"],
+.param-group input[type="search"],
+.param-group input[type="url"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #dcdfe4;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #2c3e50;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+}
+
+.param-group input[type="text"]:focus,
+.param-group input[type="email"]:focus,
+.param-group input[type="password"]:focus,
+.param-group input[type="number"]:focus,
+.param-group input[type="search"]:focus,
+.param-group input[type="url"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
 .param-group span {
     display: inline-block;
     font-size: 13px;
