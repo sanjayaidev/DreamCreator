@@ -105,8 +105,11 @@
                     <h3 id="genPromptHeadline">Prompt Title</h3>
                     <p id="genPromptDescription">Prompt description goes here</p>
                     <div class="full-prompt-box">
-                        <label>Full Prompt:</label>
-                        <code id="genFullPrompt">The full prompt text will appear here</code>
+                        <div class="full-prompt-box-header">
+                            <label for="genFullPrompt">Full Prompt (editable):</label>
+                            <button type="button" class="btn-reset-prompt" id="resetPromptBtn" onclick="resetFullPrompt()">↺ Reset</button>
+                        </div>
+                        <textarea id="genFullPrompt" class="full-prompt-edit" rows="4"></textarea>
                     </div>
                 </div>
 

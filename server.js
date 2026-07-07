@@ -857,7 +857,7 @@ app.get('/api/subcategories/:category', async (req, res) => {
 
 app.post('/api/generate', verifyToken, async (req, res) => {
     try {
-        const { promptId, imageData, model, negativePrompt, guidanceScale, steps } = req.body;
+        const { promptId, customPrompt, imageData, model, negativePrompt, guidanceScale, steps } = req.body;
         
         if (!promptId) {
             return res.status(400).json({ error: 'Prompt ID is required' });
@@ -869,12 +869,19 @@ app.post('/api/generate', verifyToken, async (req, res) => {
         }
         const prompt = promptResult.rows[0];
         
+        // Users can edit the prompt text in the generation popup before
+        // submitting - use their edited version if provided, falling back
+        // to the library's original full_prompt otherwise.
+        const finalPrompt = typeof customPrompt === 'string' && customPrompt.trim()
+            ? customPrompt.trim()
+            : prompt.full_prompt;
+        
         const selectedModel = model && model !== 'auto' ? model : 'qwen-image-2.0-pro';
         
         // Generate image
         const result = await generateImage(
             selectedModel,
-            prompt.full_prompt,
+            finalPrompt,
             imageData,
             negativePrompt,
             guidanceScale || 7.5,

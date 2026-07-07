@@ -6,6 +6,7 @@ let uploadedImageData = null;
 let currentResultUrl = null;
 let generationInProgress = false;
 let generationMode = 'image-to-image'; // 'image-to-image' | 'prompt-to-image'
+let originalFullPrompt = ''; // unedited prompt text, used by the Reset button
 
 let authToken = localStorage.getItem('authToken') || null;
 let currentUser = JSON.parse(localStorage.getItem('authUser') || 'null');
@@ -173,7 +174,8 @@ async function openGenerationModal(promptId) {
         
         document.getElementById('genPromptHeadline').textContent = prompt.headline;
         document.getElementById('genPromptDescription').textContent = prompt.description || 'No description';
-        document.getElementById('genFullPrompt').textContent = prompt.full_prompt;
+        originalFullPrompt = prompt.full_prompt;
+        document.getElementById('genFullPrompt').value = prompt.full_prompt;
         
         // Set max images from prompt
         const maxImages = prompt.max_images_allowed || 1;
@@ -206,6 +208,10 @@ function resetGenerationForm() {
     document.getElementById('generateBtn').disabled = false;
     document.getElementById('generateBtn').textContent = '🚀 Generate Image';
     setGenerationMode('image-to-image');
+}
+
+function resetFullPrompt() {
+    document.getElementById('genFullPrompt').value = originalFullPrompt;
 }
 
 // ==================== GENERATION MODE TOGGLE ====================
@@ -327,9 +333,15 @@ async function startGeneration() {
         ? document.getElementById('modelSelectT2I').value
         : document.getElementById('modelSelect').value;
     const imageData = generationMode === 'prompt-to-image' ? null : uploadedImageData;
+    const customPrompt = document.getElementById('genFullPrompt').value.trim();
     const negativePrompt = document.getElementById('negativePrompt').value;
     const guidanceScale = document.getElementById('guidanceScale').value;
     const steps = document.getElementById('steps').value;
+
+    if (!customPrompt) {
+        alert('Prompt text cannot be empty!');
+        return;
+    }
     
     const generateBtn = document.getElementById('generateBtn');
     generateBtn.disabled = true;
@@ -351,6 +363,7 @@ async function startGeneration() {
             },
             body: JSON.stringify({
                 promptId,
+                customPrompt,
                 imageData,
                 model: model === 'auto' ? null : model,
                 negativePrompt: negativePrompt || null,
