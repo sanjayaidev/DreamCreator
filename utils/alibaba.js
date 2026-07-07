@@ -7,7 +7,10 @@ const BASE_URL = process.env.DASHSCOPE_ENDPOINT || 'https://dashscope-intl.aliyu
 
 // Qwen-Image / Qwen-Image-Edit models and the newer Wan (2.6+) models are all
 // called synchronously through the same "multimodal-generation" endpoint.
+// qwen-image-max is text-to-image only, but uses this same endpoint - it's
+// fine here since generateSync() only attaches an image block when one is given.
 const SYNC_MODELS = new Set([
+    'qwen-image-max',
     'qwen-image-2.0-pro',
     'qwen-image-2.0',
     'qwen-image-edit-max',
@@ -21,6 +24,18 @@ const SYNC_MODELS = new Set([
 // Older Wan models use the legacy async image2image task API (submit -> poll).
 const ASYNC_IMAGE2IMAGE_MODELS = new Set([
     'wan2.5-i2i-preview'
+]);
+
+// Dedicated text-to-image (prompt-only, no reference image) models. These use
+// DashScope's separate text2image endpoint (submit -> poll), not the
+// multimodal-generation or image2image endpoints used above.
+const TEXT_TO_IMAGE_MODELS = new Set([
+    'wan2.5-t2i-preview',
+    'wan2.2-t2i-flash',
+    'wan2.2-t2i-plus',
+    'wanx2.1-t2i-turbo',
+    'wanx2.1-t2i-plus',
+    'wanx2.0-t2i-turbo'
 ]);
 
 function sleep(ms) {
@@ -147,6 +162,44 @@ async function generateAsyncImage2Image(model, prompt, imageData, negativePrompt
 }
 
 /**
+ * Call the async text2image endpoint for prompt-only (no reference image)
+ * generation: wan2.5-t2i-preview, wan2.2-t2i-flash/plus, wanx2.1-t2i-*, wanx2.0-t2i-turbo.
+ * Same submit -> poll pattern as generateAsyncImage2Image, but a different
+ * endpoint/request shape since there's no input image involved.
+ */
+async function generateAsyncText2Image(model, prompt, negativePrompt, apiKey) {
+    const createRes = await axios.post(
+        `${BASE_URL}/services/aigc/text2image/image-synthesis`,
+        {
+            model,
+            input: {
+                prompt
+            },
+            parameters: {
+                negative_prompt: negativePrompt || undefined,
+                size: '1024*1024',
+                n: 1
+            }
+        },
+        {
+            headers: {
+                'X-DashScope-Async': 'enable',
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000
+        }
+    );
+
+    const taskId = createRes.data?.output?.task_id;
+    if (!taskId) {
+        throw new Error(createRes.data?.message || 'DashScope did not return a task_id');
+    }
+
+    return pollTask(taskId, apiKey);
+}
+
+/**
  * Generate (or edit) an image using Alibaba Cloud Model Studio / DashScope.
  * @param {string} model - Model name selected in the UI
  * @param {string} prompt - The prompt text
@@ -172,6 +225,11 @@ async function generateImage(model, prompt, imageData, negativePrompt = null, gu
 
     if (ASYNC_IMAGE2IMAGE_MODELS.has(selectedModel)) {
         const imageUrl = await generateAsyncImage2Image(selectedModel, prompt, imageData, negativePrompt, apiKey);
+        return { imageUrl };
+    }
+
+    if (TEXT_TO_IMAGE_MODELS.has(selectedModel)) {
+        const imageUrl = await generateAsyncText2Image(selectedModel, prompt, negativePrompt, apiKey);
         return { imageUrl };
     }
 

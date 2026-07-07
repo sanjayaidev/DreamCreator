@@ -711,6 +711,46 @@ body {
     white-space: pre-wrap;
 }
 
+/* ===== MODE TOGGLE ===== */
+.mode-toggle {
+    margin-bottom: 20px;
+}
+
+.mode-toggle label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #555;
+}
+
+.mode-toggle-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 12px;
+    border: 2px solid #e1e5e9;
+    border-radius: 8px;
+    background: #fafbfc;
+    color: #555;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mode-btn:hover {
+    border-color: #667eea;
+}
+
+.mode-btn.active {
+    border-color: #667eea;
+    background: #667eea;
+    color: #fff;
+}
+
 /* ===== UPLOAD SECTION ===== */
 .upload-section {
     margin-bottom: 20px;

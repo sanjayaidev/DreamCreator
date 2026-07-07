@@ -859,8 +859,8 @@ app.post('/api/generate', verifyToken, async (req, res) => {
     try {
         const { promptId, imageData, model, negativePrompt, guidanceScale, steps } = req.body;
         
-        if (!promptId || !imageData) {
-            return res.status(400).json({ error: 'Prompt ID and image data are required' });
+        if (!promptId) {
+            return res.status(400).json({ error: 'Prompt ID is required' });
         }
         
         const promptResult = await pool.query('SELECT * FROM prompts WHERE id = $1 AND is_active = true', [promptId]);

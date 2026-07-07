@@ -5,6 +5,7 @@ let selectedPromptId = null;
 let uploadedImageData = null;
 let currentResultUrl = null;
 let generationInProgress = false;
+let generationMode = 'image-to-image'; // 'image-to-image' | 'prompt-to-image'
 
 let authToken = localStorage.getItem('authToken') || null;
 let currentUser = JSON.parse(localStorage.getItem('authUser') || 'null');
@@ -179,6 +180,7 @@ async function openGenerationModal(promptId) {
         document.querySelector('.upload-section small').textContent = 
             `Supports JPG, PNG, WEBP (Max 10MB) - ${maxImages} image${maxImages > 1 ? 's' : ''} allowed`;
         
+        setGenerationMode('image-to-image');
         generationModal.style.display = 'block';
         document.body.style.overflow = 'hidden';
     } catch (error) {
@@ -203,6 +205,37 @@ function resetGenerationForm() {
     uploadedImageData = null;
     document.getElementById('generateBtn').disabled = false;
     document.getElementById('generateBtn').textContent = '🚀 Generate Image';
+    setGenerationMode('image-to-image');
+}
+
+// ==================== GENERATION MODE TOGGLE ====================
+// 'image-to-image' requires an uploaded reference image and uses the
+// editing-capable models. 'prompt-to-image' is pure text-to-image - no
+// upload needed - and uses Alibaba Cloud's dedicated text-to-image models.
+function setGenerationMode(mode) {
+    generationMode = mode;
+
+    const imageBtn = document.getElementById('modeImageToImageBtn');
+    const promptBtn = document.getElementById('modePromptToImageBtn');
+    const uploadSection = document.getElementById('uploadSection');
+    const modelSelectionI2I = document.getElementById('modelSelectionImageToImage');
+    const modelSelectionT2I = document.getElementById('modelSelectionPromptToImage');
+
+    if (mode === 'prompt-to-image') {
+        imageBtn.classList.remove('active');
+        promptBtn.classList.add('active');
+        uploadSection.style.display = 'none';
+        modelSelectionI2I.style.display = 'none';
+        modelSelectionT2I.style.display = 'block';
+        // No reference image needed in this mode - clear anything that was uploaded.
+        removeUploadedImage();
+    } else {
+        imageBtn.classList.add('active');
+        promptBtn.classList.remove('active');
+        uploadSection.style.display = 'block';
+        modelSelectionI2I.style.display = 'block';
+        modelSelectionT2I.style.display = 'none';
+    }
 }
 
 // ==================== IMAGE UPLOAD ====================
@@ -277,7 +310,7 @@ function removeUploadedImage() {
 
 // ==================== START GENERATION ====================
 async function startGeneration() {
-    if (!uploadedImageData) {
+    if (generationMode === 'image-to-image' && !uploadedImageData) {
         alert('Please upload an image first!');
         return;
     }
@@ -290,7 +323,10 @@ async function startGeneration() {
     }
     
     const promptId = selectedPromptId;
-    const model = document.getElementById('modelSelect').value;
+    const model = generationMode === 'prompt-to-image'
+        ? document.getElementById('modelSelectT2I').value
+        : document.getElementById('modelSelect').value;
+    const imageData = generationMode === 'prompt-to-image' ? null : uploadedImageData;
     const negativePrompt = document.getElementById('negativePrompt').value;
     const guidanceScale = document.getElementById('guidanceScale').value;
     const steps = document.getElementById('steps').value;
@@ -315,7 +351,7 @@ async function startGeneration() {
             },
             body: JSON.stringify({
                 promptId,
-                imageData: uploadedImageData,
+                imageData,
                 model: model === 'auto' ? null : model,
                 negativePrompt: negativePrompt || null,
                 guidanceScale: parseFloat(guidanceScale),
@@ -879,30 +915,6 @@ function showPasswordSuccess(message) {
 function hidePasswordMessages() {
     document.getElementById('passwordError').style.display = 'none';
     document.getElementById('passwordSuccess').style.display = 'none';
-}
-
-// ==================== GOOGLE DRIVE INTEGRATION ====================
-document.getElementById('driveLoginBtn').addEventListener('click', function() {
-    // Placeholder for Google Drive integration
-    if (this.classList.contains('connected')) {
-        this.textContent = '🔗 Connect Google Drive';
-        this.classList.remove('connected');
-        localStorage.removeItem('driveConnected');
-    } else {
-        // Simulate OAuth flow
-        alert('Google Drive integration coming soon! Configure in Settings first.');
-        // In production, you'd redirect to Google OAuth
-        this.textContent = '✅ Connected';
-        this.classList.add('connected');
-        localStorage.setItem('driveConnected', 'true');
-    }
-});
-
-// Check saved drive connection
-if (localStorage.getItem('driveConnected') === 'true') {
-    const btn = document.getElementById('driveLoginBtn');
-    btn.textContent = '✅ Connected';
-    btn.classList.add('connected');
 }
 
 // ==================== MOBILE MENU TOGGLE ====================

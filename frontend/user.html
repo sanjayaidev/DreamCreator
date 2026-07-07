@@ -23,7 +23,6 @@
                 <a href="#" class="active">Home</a>
                 <a href="#gallery">Gallery</a>
                 <a href="#about">About</a>
-                <button class="btn-drive" id="driveLoginBtn">🔗 Connect Google Drive</button>
                 <button class="btn-secondary" id="authNavBtn">👤 Log In</button>
             </nav>
         </div>
@@ -111,8 +110,21 @@
                     </div>
                 </div>
 
-                <!-- Image Upload -->
-                <div class="upload-section">
+                <!-- Generation Mode Toggle -->
+                <div class="mode-toggle">
+                    <label>Generation Mode</label>
+                    <div class="mode-toggle-buttons">
+                        <button type="button" class="mode-btn active" id="modeImageToImageBtn" onclick="setGenerationMode('image-to-image')">
+                            🖼️ Image to Image
+                        </button>
+                        <button type="button" class="mode-btn" id="modePromptToImageBtn" onclick="setGenerationMode('prompt-to-image')">
+                            ✨ Prompt to Image
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Image Upload (Image to Image mode only) -->
+                <div class="upload-section" id="uploadSection">
                     <label>Upload Your Image</label>
                     <div class="upload-area" id="uploadArea">
                         <div class="upload-placeholder">
@@ -127,8 +139,8 @@
                     <button onclick="removeUploadedImage()" class="btn-danger" id="removeImageBtn" style="display: none;">Remove</button>
                 </div>
 
-                <!-- Model Selection -->
-                <div class="model-selection">
+                <!-- Model Selection: Image to Image -->
+                <div class="model-selection" id="modelSelectionImageToImage">
                     <label>Select AI Model</label>
                     <select id="modelSelect">
                         <option value="auto">🤖 Auto-select (Recommended)</option>
@@ -141,6 +153,23 @@
                         <option value="wan2.7-image">🚀 Wan 2.7</option>
                         <option value="wan2.6-image">🚀 Wan 2.6</option>
                         <option value="wan2.5-i2i-preview">🚀 Wan 2.5 Preview</option>
+                    </select>
+                </div>
+
+                <!-- Model Selection: Prompt to Image (text-to-image only, no upload) -->
+                <div class="model-selection" id="modelSelectionPromptToImage" style="display: none;">
+                    <label>Select AI Model</label>
+                    <select id="modelSelectT2I">
+                        <option value="auto">🤖 Auto-select (Recommended)</option>
+                        <option value="qwen-image-max">⚡ Qwen Image Max</option>
+                        <option value="qwen-image-2.0-pro">⚡ Qwen Image 2.0 Pro</option>
+                        <option value="qwen-image-2.0">⚡ Qwen Image 2.0</option>
+                        <option value="wan2.5-t2i-preview">🚀 Wan 2.5 Preview (T2I)</option>
+                        <option value="wan2.2-t2i-flash">🚀 Wan 2.2 Flash (T2I)</option>
+                        <option value="wan2.2-t2i-plus">🚀 Wan 2.2 Plus (T2I)</option>
+                        <option value="wanx2.1-t2i-turbo">🚀 WanX 2.1 Turbo (T2I)</option>
+                        <option value="wanx2.1-t2i-plus">🚀 WanX 2.1 Plus (T2I)</option>
+                        <option value="wanx2.0-t2i-turbo">🚀 WanX 2.0 Turbo (T2I)</option>
                     </select>
                 </div>
 
