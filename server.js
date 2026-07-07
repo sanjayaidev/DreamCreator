@@ -118,11 +118,18 @@ app.post('/api/auth/register', async (req, res) => {
             [user.id, token, expiresAt]
         );
         
-        // Create usage stats for new user
-        await pool.query(
-            'INSERT INTO usage_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
-            [user.id]
-        );
+        // Create usage stats for new user. This is bookkeeping, not core to
+        // registration - if it fails (e.g. the usage_stats table is missing
+        // because the schema wasn't fully applied), don't let that take down
+        // account creation. Log it loudly so it still gets fixed.
+        try {
+            await pool.query(
+                'INSERT INTO usage_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+                [user.id]
+            );
+        } catch (statsError) {
+            console.error('Failed to initialize usage_stats for new user (schema may be incomplete):', statsError.message);
+        }
         
         res.status(201).json({
             success: true,
@@ -894,25 +901,32 @@ app.post('/api/generate', verifyToken, async (req, res) => {
             [promptId, req.userId, selectedModel, finalImageUrl, 'completed']
         );
         
-        // Update usage stats
-        await pool.query(
-            `INSERT INTO usage_stats (user_id, total_generations, total_images_generated, tools_used, templates_used, last_active)
-             VALUES ($1, 1, 1, ARRAY[$2], ARRAY[$3], CURRENT_TIMESTAMP)
-             ON CONFLICT (user_id) DO UPDATE SET
-             total_generations = usage_stats.total_generations + 1,
-             total_images_generated = usage_stats.total_images_generated + 1,
-             tools_used = array_append(
-                 COALESCE(usage_stats.tools_used, '{}'), 
-                 $2
-             ),
-             templates_used = array_append(
-                 COALESCE(usage_stats.templates_used, '{}'), 
-                 $3
-             ),
-             last_active = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP`,
-            [req.userId, selectedModel, prompt.headline]
-        );
+        // Update usage stats. This is bookkeeping on top of an already-saved,
+        // already-successful generation - if it fails (e.g. usage_stats is
+        // missing due to an incomplete schema), the user should still get
+        // their image and a success response, not a false "generation failed".
+        try {
+            await pool.query(
+                `INSERT INTO usage_stats (user_id, total_generations, total_images_generated, tools_used, templates_used, last_active)
+                 VALUES ($1, 1, 1, ARRAY[$2], ARRAY[$3], CURRENT_TIMESTAMP)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                 total_generations = usage_stats.total_generations + 1,
+                 total_images_generated = usage_stats.total_images_generated + 1,
+                 tools_used = array_append(
+                     COALESCE(usage_stats.tools_used, '{}'), 
+                     $2
+                 ),
+                 templates_used = array_append(
+                     COALESCE(usage_stats.templates_used, '{}'), 
+                     $3
+                 ),
+                 last_active = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP`,
+                [req.userId, selectedModel, prompt.headline]
+            );
+        } catch (statsError) {
+            console.error('Failed to update usage_stats (schema may be incomplete):', statsError.message);
+        }
         
         res.json({
             success: true,
