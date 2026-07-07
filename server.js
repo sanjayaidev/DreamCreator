@@ -944,13 +944,21 @@ app.post('/api/generate', verifyToken, async (req, res) => {
     } catch (error) {
         console.error('Generation error:', error);
         
-        // Save failed generation
+        // Save failed generation - best-effort only. This must never be
+        // allowed to throw uncaught: an error here (e.g. schema drift on the
+        // generations table) would otherwise become an unhandled rejection
+        // and crash the entire process, taking down every other request in
+        // flight along with it.
         if (req.body.promptId) {
-            await pool.query(
-                `INSERT INTO generations (prompt_id, user_id, model, status, error_message) 
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [req.body.promptId, req.userId, req.body.model || 'unknown', 'failed', error.message]
-            );
+            try {
+                await pool.query(
+                    `INSERT INTO generations (prompt_id, user_id, model, status, error_message) 
+                     VALUES ($1, $2, $3, $4, $5)`,
+                    [req.body.promptId, req.userId, req.body.model || 'unknown', 'failed', error.message]
+                );
+            } catch (logError) {
+                console.error('Failed to record failed generation (schema may be incomplete):', logError.message);
+            }
         }
         
         res.status(500).json({ success: false, error: error.message });
@@ -1106,6 +1114,18 @@ app.use((err, req, res, next) => {
 });
 
 // ==================== START SERVER ====================
+
+// Defense-in-depth: an unhandled rejection anywhere (e.g. an await inside a
+// catch block that itself throws, as happened with the generations table
+// schema drift) should never be allowed to crash the whole process and drop
+// every other in-flight request. Log it loudly instead.
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection (server staying up):', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception (server staying up):', err);
+});
+
 app.listen(PORT, () => {
     console.log('='.repeat(70));
     console.log('🚀 PromptPro Server Started');
