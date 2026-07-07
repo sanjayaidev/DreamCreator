@@ -164,8 +164,15 @@ app.post('/api/auth/login', async (req, res) => {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 7);
         
+        // Replace any existing session(s) for this user with a fresh one.
+        // Deliberately not using "ON CONFLICT (user_id)" here - that depends
+        // on the sessions_user_id_unique constraint from schema.sql actually
+        // being present, which recent schema drift has shown isn't reliable.
+        // Delete-then-insert gives the same "one active session per user"
+        // behavior without requiring that constraint to exist.
+        await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
         await pool.query(
-            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET token = $2, expires_at = $3',
+            'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
             [user.id, token, expiresAt]
         );
         
